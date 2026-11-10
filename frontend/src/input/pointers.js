@@ -160,10 +160,12 @@ export class Pointers {
     for (const grab of this.worldGrabs.values()) { const point = this.grabPoint(grab.pointer); if (point) grab.held = this.stage.toRobot(point); }
   }
 
+  // The floor stays on the table: a hold slides, turns and scales the world, it does not lift it.
+  // (Which height is on the table is the View panel's "floor" setting.)
   moveWorld() {
     const grabs = [...this.worldGrabs.values()], stage = this.stage;
     if (!grabs.length) return;
-    const points = grabs.map(grab => this.grabPoint(grab.pointer));
+    const points = grabs.map(grab => this.grabPoint(grab.pointer)), floor = stage.view.center.z;
     if (points.some(point => !point)) return;
     if (grabs.length >= 2) {
       const [p, q] = points.map(point => stage.root.worldToLocal(point.clone()));
@@ -180,6 +182,7 @@ export class Pointers {
     } else {
       stage.view.center.add(grabs[0].held.clone().sub(stage.toRobot(points[0].clone())));
     }
+    stage.view.center.z = floor;
     stage.target.center.copy(stage.view.center); stage.apply();
   }
 

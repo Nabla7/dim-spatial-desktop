@@ -103,10 +103,14 @@ export class CloudLayer extends Layer {
     if (!pose || !count) return;
     const step = Math.max(1, Math.floor(count / 1500)), heights = [], point = new THREE.Vector3();
     this.fixedBox.makeEmpty();
+    // Points above the table's lid are not drawn, so they do not stretch the colour scale either.
+    const lid = this.stage.lifeSize ? Infinity : this.stage.view.center.z + this.stage.ceiling;
     for (let i = 0; i < count; i += step) {
       point.set(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]).applyMatrix4(pose);
+      if (point.z > lid) continue;
       heights.push(point.z); this.fixedBox.expandByPoint(point);
     }
+    if (heights.length < 2) return;
     heights.sort((a, b) => a - b);
     const low = heights[Math.floor(heights.length * 0.03)], high = heights[Math.floor(heights.length * 0.97)], u = this.material.uniforms;
     // Ease toward the new range so the colours do not flicker from scan to scan.

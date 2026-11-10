@@ -21,7 +21,7 @@ import {openLauncher} from './panels/launcher.js';
 import {openModules} from './panels/modules.js';
 import {openKeyboard} from './panels/keyboard.js';
 
-const TABLE = new THREE.Vector3(0, 0.95, 0);
+const TABLE = new THREE.Vector3(0, 0.95, 0), FOV = 50;
 
 export class App extends EventTarget {
   async start() {
@@ -37,7 +37,7 @@ export class App extends EventTarget {
     document.body.prepend(renderer.domElement);
 
     this.scene = new THREE.Scene();
-    this.camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.02, 200);
+    this.camera = new THREE.PerspectiveCamera(FOV, innerWidth / innerHeight, 0.02, 200);
     this.scene.add(this.camera);
     this.scene.add(new THREE.HemisphereLight(0xffffff, 0x334455, 1.6));
     const key = new THREE.DirectionalLight(0xffffff, 1.8); key.position.set(1.5, 3, 2); this.scene.add(key);
@@ -151,6 +151,8 @@ export class App extends EventTarget {
     this.hands.hide();
     this.stage.root.position.copy(TABLE); this.stage.root.rotation.set(0, 0, 0);
     this.stage.setLifeSize(false);
+    // A session leaves the headset's field of view on the camera; the screen has its own.
+    this.camera.fov = FOV; this.camera.zoom = 1;
     this.resetCamera(); this.resize();
   }
 

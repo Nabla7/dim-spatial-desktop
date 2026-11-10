@@ -10,11 +10,20 @@ const FINGERS = [
 ];
 const BONES = FINGERS.flatMap(chain => chain.slice(1).map((joint, i) => [chain[i], joint]));
 
+// A soft round sprite, so a joint is a dot of light and not a square.
+function dot() {
+  const canvas = document.createElement('canvas'); canvas.width = canvas.height = 64;
+  const ctx = canvas.getContext('2d'), gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+  gradient.addColorStop(0, 'rgba(255,255,255,1)'); gradient.addColorStop(0.45, 'rgba(255,255,255,0.9)'); gradient.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = gradient; ctx.fillRect(0, 0, 64, 64);
+  return new THREE.CanvasTexture(canvas);
+}
+
 export class Hands {
   constructor(scene, theme) {
     this.theme = theme; this.hands = {};
     for (const side of ['left', 'right']) {
-      const joints = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial({color: theme.three.primary, size: 0.011, transparent: true, opacity: 0.95, depthWrite: false, blending: THREE.AdditiveBlending}));
+      const joints = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial({color: theme.three.primary, size: 0.009, map: dot(), transparent: true, opacity: 0.95, depthWrite: false, blending: THREE.AdditiveBlending}));
       joints.geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(25 * 3), 3));
       const bones = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({color: theme.three.primary, transparent: true, opacity: 0.55, depthWrite: false, blending: THREE.AdditiveBlending}));
       bones.geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(BONES.length * 6), 3));

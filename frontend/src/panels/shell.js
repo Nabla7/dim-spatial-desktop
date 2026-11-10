@@ -15,7 +15,7 @@ const PHASE_TONE = {starting: 'warn', running: 'ok', stopping: 'warn', failed: '
 export function openShell(app) {
   const blueprint = app.blueprint;
   const head = app.panel({
-    id: 'head', bare: true, width: 0.74, height: 0.05,
+    id: 'head', bare: true, width: 0.94, height: 0.05,
     draw(ui, content) {
       const toast = app.toasts[0];
       const brand = ui.text('DIMOS', content.x + 6, content.cy + 1, {size: SIZE.sm, family: 'display', color: ui.tone('primary'), track: 4});
@@ -52,10 +52,9 @@ export function openShell(app) {
     ['view', 'VIEW', 'scale', () => openView(app)],
   ];
   const bar = app.panel({
-    id: 'bar', bare: true, width: 0.74, height: 0.068,
+    id: 'bar', bare: true, width: 0.94, height: 0.068,
     draw(ui, content) {
-      const xr = app.xr, modes = xr.modes.length, xrWidth = xr.presenting ? 150 : modes ? 132 * modes + 8 * (modes - 1) : 0;
-      const right = xrWidth ? content.cutRight(xrWidth, 14) : null;
+      const xr = app.xr, right = content.cutRight(280, 16);
       const cells = content.cols(items.length, 8);
       items.forEach(([id, label, icon, open], index) => {
         const cell = cells[index], on = app.dock.has(id), hot = ui.isHot(`bar:${id}`);
@@ -67,11 +66,19 @@ export function openShell(app) {
         ui.text(label, cell.cx, cell.b - 18, {size: 12.5, family: 'display', color: ui.tone(on || hot ? 'fg' : 'muted'), align: 'center', track: 1.5, max: cell.w - 6});
         ui.region(cell, {id: `bar:${id}`, onClick: open});
       });
-      if (!right) return;
-      if (xr.presenting) { ui.button(right, 'EXIT', () => xr.exit(), {id: 'xr:exit', tone: 'warn', icon: 'vr'}); return; }
-      const buttons = right.cols(modes, 8);
-      xr.modes.forEach((mode, index) => ui.button(buttons[index], mode === 'immersive-ar' ? 'MIXED' : 'VR', () => xr.enter(mode),
-        {id: `xr:${mode}`, icon: 'vr', tone: mode === 'immersive-ar' ? 'alt' : 'primary', on: index === 0, size: SIZE.sm}));
+      // The headset corner: enter, leave, or the reason there is nothing to enter.
+      if (xr.presenting) {
+        const [recentre, exit] = right.cols(2, 8);
+        ui.button(recentre, 'BRING HERE', () => xr.recenter(), {id: 'xr:recentre', icon: 'home', size: SIZE.xs});
+        ui.button(exit, 'EXIT', () => xr.exit(), {id: 'xr:exit', tone: 'warn', icon: 'vr', size: SIZE.sm});
+      } else if (xr.modes.length) {
+        const buttons = right.cols(xr.modes.length, 8);
+        xr.modes.forEach((mode, index) => ui.button(buttons[index], mode === 'immersive-ar' ? 'MIXED' : 'VR', () => xr.enter(mode),
+          {id: `xr:${mode}`, icon: 'vr', tone: mode === 'immersive-ar' ? 'alt' : 'primary', on: index === 0, size: SIZE.sm}));
+      } else {
+        ui.icon('vr', right.x + 20, right.cy, 24, ui.tone('muted', 0.6));
+        ui.wrap(xr.reason || 'looking for a headset', new (right.constructor)(right.x + 44, right.cy - 20, right.w - 48, 40), {size: SIZE.xs - 1, family: 'mono', color: ui.tone('muted', 0.8), maxLines: 2, lineHeight: 1.3});
+      }
     },
   });
   app.dock.addEventListener('change', () => bar.invalidate());

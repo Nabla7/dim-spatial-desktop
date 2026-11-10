@@ -7,7 +7,8 @@ const boot = document.querySelector('#boot'), note = document.querySelector('#bo
 async function emulate() {
   const {XRDevice, metaQuest3} = await import('../vendor/dev/iwer.module.min.js');
   const device = new XRDevice(metaQuest3);
-  device.installRuntime();
+  // A desk browser has navigator.xr with no device behind it; the emulator takes its place.
+  device.installRuntime({forceInstall: true});
   window.xrDevice = device;
 }
 

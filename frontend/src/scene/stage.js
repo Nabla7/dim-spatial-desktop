@@ -58,7 +58,11 @@ export class Stage {
     this.view = {center: new THREE.Vector3(), scale: 0.15, yaw: 0};
     this.target = {center: new THREE.Vector3(), scale: 0.15, yaw: 0};
     this.lifeSize = false; this.clipping = true;
-    this.clipPlanes = Array.from({length: SIDES}, () => new THREE.Plane());
+    // The display volume: the table's six sides and a lid. The lid sits at `ceiling` metres of the robot's
+    // world above the floor (a warehouse roof ten metres up would otherwise hang over the viewer's head and
+    // hide the floor from above), and never higher above the table than `volume`.
+    this.ceiling = 3; this.volume = 0.95;
+    this.clipPlanes = Array.from({length: SIDES + 1}, () => new THREE.Plane());
     this.noPlanes = [];
     this.materials = new Set();
     this.table = new THREE.Group(); this.root.add(this.table);
@@ -166,6 +170,9 @@ export class Stage {
       point.set(Math.sin(a) * apothem, 0, Math.cos(a) * apothem).applyMatrix4(this.root.matrixWorld);
       this.clipPlanes[i].setFromNormalAndCoplanarPoint(normal.applyMatrix3(rotation).normalize(), point);
     }
+    const lid = Math.min(this.volume, Number.isFinite(this.ceiling) ? this.ceiling * scale : Infinity);
+    normal.set(0, -1, 0).applyMatrix3(rotation).normalize(); point.set(0, lid, 0).applyMatrix4(this.root.matrixWorld);
+    this.clipPlanes[SIDES].setFromNormalAndCoplanarPoint(normal, point);
   }
 
   update(time, dt) {
