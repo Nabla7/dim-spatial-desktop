@@ -18,7 +18,8 @@ export class XRManager extends EventTarget {
       try { if (await navigator.xr.isSessionSupported(mode)) modes.push(mode); } catch { /* blocked by policy: not offered */ }
     }
     this.modes = modes;
-    if (!modes.length) this.reason = 'no headset found by this browser';
+    // Inside Desktop's window the page is a frame; a headset browser enters XR from the app's own tab.
+    if (!modes.length) this.reason = parent !== window ? 'no headset here; in one, open this app in its own tab' : 'no headset found by this browser';
     this.dispatchEvent(new Event('change'));
   }
 

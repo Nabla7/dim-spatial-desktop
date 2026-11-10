@@ -110,7 +110,8 @@ export class Layers extends EventTarget {
   // it (a building-sized map would shrink the robot to a dot); without one it is everything drawn.
   frameAll() {
     const box = new THREE.Box3(), robot = this.robotPosition();
-    if (robot) box.setFromCenterAndSize(robot, new THREE.Vector3(5, 5, 0)).min.z = robot.z;
+    // The lowest link is a wheel's or a foot's centre: the floor is a little under it.
+    if (robot) box.setFromCenterAndSize(robot, new THREE.Vector3(5, 5, 0)).min.z = robot.z - 0.08;
     else {
       for (const layer of this.layers.values()) if (layer.visible && layer.bounds) { const bounds = layer.bounds(); if (bounds && !bounds.isEmpty()) box.union(bounds); }
       if (box.isEmpty()) return false;

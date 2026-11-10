@@ -6,7 +6,7 @@ export function openView(app) {
   if (app.dock.has(id)) { app.dock.close(id); return; }
   const stage = app.stage;
   const panel = app.panel({
-    id, title: 'View', glyph: 'scale', width: 0.36, height: 0.6, onClose: () => app.dock.close(id),
+    id, title: 'View', glyph: 'scale', width: 0.36, height: 0.5, onClose: () => app.dock.close(id),
     draw(ui, content) {
       const scale = stage.target.scale;
       panel.tag = stage.lifeSize ? '1 : 1' : `1 : ${scale >= 1 ? scale.toFixed(1) : (1 / scale).toFixed(scale < 0.02 ? 0 : 1)}`;
@@ -22,7 +22,7 @@ export function openView(app) {
       ui.heading(content.cutTop(26, 8), 'Floor', `the table shows z = ${stage.target.center.z.toFixed(2)} m`);
       const floor = content.cutTop(44, 10).cols(3, 8);
       ui.button(floor[0], 'LOWER', () => { stage.target.center.z -= 0.25; }, {id: 'floor:down', icon: 'down', size: SIZE.xs});
-      ui.button(floor[1], 'ROBOT', () => { const at = app.layers.robotPosition(); if (at) stage.target.center.z = at.z; }, {id: 'floor:robot', icon: 'robot', size: SIZE.xs, enabled: !!app.layers.robotPosition()});
+      ui.button(floor[1], 'ROBOT', () => { const at = app.layers.robotPosition(); if (at) stage.target.center.z = at.z - 0.08; }, {id: 'floor:robot', icon: 'robot', size: SIZE.xs, enabled: !!app.layers.robotPosition()});
       ui.button(floor[2], 'HIGHER', () => { stage.target.center.z += 0.25; }, {id: 'floor:up', icon: 'up', size: SIZE.xs});
       ui.heading(content.cutTop(26, 8), 'Lid', Number.isFinite(stage.ceiling) ? `hides above ${stage.ceiling.toFixed(1)} m` : 'off');
       ui.slider(content.cutTop(44, 10), Math.min(stage.ceiling, 12), 0.5, 12, value => { stage.ceiling = value >= 11.9 ? Infinity : value; },

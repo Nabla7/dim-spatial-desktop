@@ -59,25 +59,31 @@ export class BlueprintAgent extends Backend {
   send(text) {
     if (!this.publisher) return;
     this.publisher.put(encodeCborText(text));
-    this.push({role: 'user', text, pending: true});
+    const message = {role: 'user', text, pending: true};
+    this.push(message);
+    // The agent repeats what it hears. No echo means nothing is listening on /human_input.
+    setTimeout(() => { if (message.pending) { message.pending = false; message.lost = true; this.changed(); } }, 8000);
   }
 }
 
-// Desktop's own agent (dimcode, behind /gateways/agent/). Until it is installed this backend only
-// says how to get it; the chat itself is the next step (see AGENTS.md).
-export class DesktopAgent extends Backend {
+// The development agents: Desktop's own (dimcode, behind /gateways/agent/) and dimos's agent harness
+// (`dimos agent`, a gateway on a Unix socket). Neither can be reached from this page yet: the first is not
+// installed on every Desktop and this page does not speak its protocol, the second has no listener a
+// browser can dial. This backend reports which of them exists here and what the next step is.
+export class DevAgent extends Backend {
   constructor(app) {
     super();
-    this.app = app; this.id = 'desktop'; this.title = 'DEV AGENT'; this.status = null;
+    this.app = app; this.id = 'dev'; this.title = 'DEV AGENT'; this.status = null;
     this.poll();
   }
 
   async poll() {
     try {
       this.status = await gateway.agentStatus();
-      this.reason = this.status.ready ? 'Desktop\'s agent is running. Talk to it in Desktop\'s chat box for now; this panel does not speak its protocol yet.'
-        : this.status.installed ? `Desktop's agent is installed but not ready${this.status.error ? `: ${this.status.error}` : '.'}`
-          : 'Desktop\'s agent is not installed. Desktop → Settings → Agent → Install.';
+      const desktop = this.status.ready ? 'Desktop\'s agent (dimcode) is running: talk to it in Desktop\'s chat box. This panel cannot carry that conversation yet.'
+        : this.status.installed ? `Desktop's agent (dimcode) is installed but not ready${this.status.error ? `: ${this.status.error}` : '.'}`
+          : 'Desktop\'s agent (dimcode) is not installed. Desktop → Settings → Agent → Install.';
+      this.reason = `${desktop}\n\nThe dimos agent harness (dimos agent) listens on a Unix socket only, so a page cannot reach it without a bridge.\n\nUntil one of the two is wired in, the ROBOT AGENT tab talks to the agent of an agentic blueprint.`;
     } catch (error) { this.reason = `Desktop did not answer: ${error.message}`; }
     this.changed();
   }

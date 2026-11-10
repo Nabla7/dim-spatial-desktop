@@ -296,9 +296,14 @@ export class RobotLayer extends Layer {
     }
   }
 
+  // Where the robot stands: its root link's place on the ground plane, at the height of its lowest link
+  // (a wheel, a foot), since a root link is often a chassis or a pelvis well above the floor.
   position() {
     const root = this.model?.links[0]?.link, pose = root && this.tf.knows(root) ? this.tf.lookup(root) : null;
-    return pose ? new THREE.Vector3().setFromMatrixPosition(pose) : null;
+    if (!pose) return null;
+    const at = new THREE.Vector3().setFromMatrixPosition(pose), point = new THREE.Vector3();
+    for (const {link} of this.model.links) { const link_pose = this.tf.knows(link) ? this.tf.lookup(link) : null; if (link_pose) at.z = Math.min(at.z, point.setFromMatrixPosition(link_pose).z); }
+    return at;
   }
 
   bounds() {

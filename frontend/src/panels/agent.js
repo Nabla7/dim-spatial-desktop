@@ -1,14 +1,14 @@
 // Talking to an agent: a transcript, a text box (typed, or dictated where the browser can), send.
 import {SIZE} from '../ui/holo.js';
 import {Rect} from '../ui/rect.js';
-import {BlueprintAgent, DesktopAgent} from '../data/agents.js';
+import {BlueprintAgent, DevAgent} from '../data/agents.js';
 
 const Recognition = globalThis.SpeechRecognition || globalThis.webkitSpeechRecognition;
 
 export function openAgent(app) {
   const id = 'agent';
   if (app.dock.has(id)) { app.dock.close(id); return; }
-  app.agents ||= [new BlueprintAgent(app), new DesktopAgent(app)];
+  app.agents ||= [new BlueprintAgent(app), new DevAgent(app)];
   const state = {backend: app.agents.find(agent => agent.available)?.id || app.agents[0].id, draft: '', listening: false};
   const backend = () => app.agents.find(agent => agent.id === state.backend);
   let recognition = null;
@@ -45,7 +45,8 @@ export function openAgent(app) {
       ui.chamfer(box, 10); ui.ctx.fillStyle = ui.tone(tone, mine ? 0.13 : 0.07); ui.ctx.fill();
       ui.ctx.strokeStyle = ui.tone(tone, mine ? 0.5 : 0.35); ui.ctx.lineWidth = 1.2; ui.ctx.stroke();
     }
-    ui.wrap(text, new Rect(box.x + pad, box.y + pad + head, body.w, 0), {size, family, color: ui.tone(toolish ? (message.role === 'call' ? 'alt' : 'muted') : message.pending ? 'muted' : 'fg'), maxLines: toolish ? 6 : 60, lineHeight: 1.4});
+    ui.wrap(text, new Rect(box.x + pad, box.y + pad + head, body.w, 0), {size, family, color: ui.tone(toolish ? (message.role === 'call' ? 'alt' : 'muted') : message.pending || message.lost ? 'muted' : 'fg'), maxLines: toolish ? 6 : 60, lineHeight: 1.4});
+    if (message.lost) { ui.text('no agent heard this', box.r, box.b + 9, {size: SIZE.xs - 2, family: 'mono', color: ui.tone('warn'), align: 'right'}); return box.h + 26; }
     return box.h + 10;
   }
 

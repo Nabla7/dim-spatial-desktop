@@ -32,8 +32,10 @@ export function openLayers(app) {
             const hot = ui.row(row, {id: `layer:${layer.key}`, onClick: () => layers.toggle(layer.key), selected: layer.visible});
             ui.icon(layer.glyph, row.x + 24, row.cy, 22, ui.tone(layer.visible ? 'primary' : 'muted', hot ? 1 : 0.85));
             ui.text(layer.label, row.x + 48, row.y + 20, {size: SIZE.md, weight: 500, color: ui.tone(layer.visible ? 'fg' : 'muted'), max: row.w - 190});
-            const status = !layer.visible ? 'hidden' : layer.live ? (layer.detail || 'live') : 'waiting for data';
-            ui.text(`${status}${topic?.hz ? ` · ${hz(topic.hz)}` : ''}`, row.x + 48, row.y + 42, {size: SIZE.xs, family: 'mono', color: ui.tone(layer.visible && !layer.live ? 'warn' : 'muted'), max: row.w - 190});
+            // "waiting" is worth a warning only when the topic is in fact publishing.
+            const silent = layer.topic && !topic?.hz && layer.kind !== 'robot';
+            const status = !layer.visible ? 'hidden' : layer.live ? (layer.detail || 'live') : silent ? 'nothing published' : 'waiting for data';
+            ui.text(`${status}${topic?.hz ? ` · ${hz(topic.hz)}` : ''}`, row.x + 48, row.y + 42, {size: SIZE.xs, family: 'mono', color: ui.tone(layer.visible && !layer.live && !silent ? 'warn' : 'muted'), max: row.w - 190});
             let right = row.r - 8;
             ui.icon(layer.visible ? 'eye' : 'eyeOff', right - 14, row.cy, 22, ui.tone(layer.visible ? 'primary' : 'muted')); right -= 40;
             if (layer.kind === 'robot') {

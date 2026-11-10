@@ -16,6 +16,7 @@ import {Hands} from './xr/hands.js';
 import {XRManager} from './xr/session.js';
 import {Bus} from './data/bus.js';
 import {Blueprint} from './data/blueprint.js';
+import {gateway} from './data/gateway.js';
 import {openShell} from './panels/shell.js';
 import {openLauncher} from './panels/launcher.js';
 import {openModules} from './panels/modules.js';
@@ -81,6 +82,7 @@ export class App extends EventTarget {
     this.text.addEventListener('focus', () => { if (this.xr.presenting && !this.xr.session?.isSystemKeyboardSupported) openKeyboard(this, true); });
     this.text.addEventListener('blur', () => { if (this.dock.has('keyboard')) this.dock.close('keyboard'); });
 
+    this.shareView();
     addEventListener('resize', () => this.resize());
     this.followDesktop();
     renderer.setAnimationLoop((time, frame) => this.frame(time, frame));
@@ -114,6 +116,34 @@ export class App extends EventTarget {
     this.camera.aspect = innerWidth / innerHeight; this.camera.updateProjectionMatrix();
     this.renderer.setSize(innerWidth, innerHeight);
     this.dock.layout();
+  }
+
+  // Desktop keeps a note of what each app shows, which an agent can read to know what the user is looking
+  // at, and an agent can ask Desktop to point something out. Both go through here: the note is rewritten
+  // when the selection, the panels or the layers change, and a highlight flashes that module's plate.
+  shareView() {
+    const name = location.pathname.split('/').filter(Boolean)[1] || 'dim-spatial-desktop';
+    let timer = 0;
+    const report = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => gateway.reportView(name, {
+        view: 'spatial-desktop', blueprint: this.blueprint.name, phase: this.blueprint.phase, selected: this.selected, immersive: this.xr.presenting,
+        visible: {
+          modules: this.blueprint.modules.map(module => ({id: module.id, label: module.name})),
+          panels: this.dock.panels.map(panel => panel.id),
+          layers: this.layers.list().filter(layer => layer.visible).map(layer => layer.label),
+        },
+      }).catch(() => {}), 1200);
+    };
+    this.addEventListener('select', report); this.dock.addEventListener('change', report);
+    this.layers.addEventListener('change', report); this.blueprint.addEventListener('modules', report); this.xr.addEventListener('change', report);
+    this.bus.ready.then(() => this.bus.subscribeEvents('desktop', event => {
+      if (event.type !== 'view-highlight' || (event.app && event.app !== name)) return;
+      const module = this.blueprint.modules.find(entry => entry.id === event.id || entry.name === event.id || entry.name.toLowerCase() === String(event.id).toLowerCase());
+      if (!module) return;
+      this.select(module.id); this.toast(`Highlighted: ${module.name}`, 'info');
+      for (let i = 0; i < (event.times || 3); i++) setTimeout(() => this.pulse(module.id), i * 600);
+    }));
   }
 
   // Desktop's shell tells an embedded page how much of its bottom edge the dock covers, and which skin is on.
@@ -160,7 +190,7 @@ export class App extends EventTarget {
   placeAround(head, yaw) {
     this.dock.setAnchor(head, yaw);
     const forward = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
-    this.stage.root.position.copy(head).addScaledVector(forward, 0.82);
+    this.stage.root.position.copy(head).addScaledVector(forward, 0.98);
     this.stage.root.position.y = Math.max(0.5, head.y - 0.58);
     this.stage.root.rotation.set(0, yaw, 0);
     this.viewer = {head: head.clone(), yaw};

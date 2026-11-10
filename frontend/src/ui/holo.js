@@ -282,7 +282,7 @@ export class Ui {
     const {panel, ctx, theme} = this, {dw: w, dh: h} = panel, full = new Rect(1.5, 1.5, w - 3, h - 3);
     if (panel.bare) {
       this.chamfer(full, 14);
-      ctx.fillStyle = theme.c('surface', 0.80); ctx.fill();
+      ctx.fillStyle = theme.c('surface', 0.92); ctx.fill();
       ctx.strokeStyle = this.tone('primary', 0.34); ctx.lineWidth = 1.5; ctx.stroke();
       ctx.strokeStyle = this.tone('primary', 0.95); ctx.lineWidth = 3; ctx.beginPath();
       ctx.moveTo(w - 22, 1.5); ctx.lineTo(w - 1.5, 1.5); ctx.lineTo(w - 1.5, 22);
@@ -293,9 +293,9 @@ export class Ui {
     }
     this.chamfer(full, 22);
     const glass = ctx.createLinearGradient(0, 0, 0, h);
-    glass.addColorStop(0, theme.mix('surface', 'primary', 0.07, 0.86));
-    glass.addColorStop(0.35, theme.c('surface', 0.80));
-    glass.addColorStop(1, theme.c('bg', 0.84));
+    glass.addColorStop(0, theme.mix('surface', 'primary', 0.07, 0.95));
+    glass.addColorStop(0.35, theme.c('surface', 0.93));
+    glass.addColorStop(1, theme.c('bg', 0.94));
     ctx.fillStyle = glass; ctx.fill();
     // A dot lattice, so the glass has depth where it is empty.
     ctx.save(); ctx.clip(); ctx.fillStyle = this.tone('primary', 0.055);

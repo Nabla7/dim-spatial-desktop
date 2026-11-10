@@ -119,9 +119,10 @@ export class Dock extends EventTarget {
     const columns = {};
     for (const entry of live) {
       if (entry.free) continue;
-      if (entry.slot === 'bar') { place(entry, 0, 0.62, eye - 0.62, -0.75); continue; }
+      // The command bar lies along the near edge of the table (app.js puts the table 0.98 m out, 0.58 m below the eyes).
+      if (entry.slot === 'bar') { place(entry, 0, 0.43, eye - 0.55, -0.9); continue; }
       if (entry.slot === 'head') { place(entry, 0, 1.25, eye + 0.34, 0.12); continue; }
-      if (entry.slot === 'keys') { place(entry, 0, 0.5, eye - 0.42, -0.5); continue; }
+      if (entry.slot === 'keys') { place(entry, 0, 0.52, eye - 0.36, -0.55); continue; }
       (columns[entry.slot] ||= []).push(entry);
     }
     for (const [slot, column] of Object.entries(columns)) {
