@@ -1,6 +1,16 @@
 title: Spatial Desktop
 version: "0.1.0"
 spec-version: v1.6
+provides:
+  openapi: 3.1.0
+  info:
+    title: Spatial Desktop
+    version: 1.0.0
+    description: The running blueprint as holograms, on a screen and in a headset, with a chat to a coding agent.
+  paths: {}
+  # The agent bridge runs a coding agent as this user: only this app's own pages may reach it.
+  x-private:
+    - api/agent/*
 uses:
   "@dimos-gateway":
     - GET active
