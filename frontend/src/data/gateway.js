@@ -49,6 +49,18 @@ export const gateway = {
   launch: (blueprint, config) => request('../@launcher/launch', {method: 'POST', body: config ? {blueprint, config} : {blueprint}, timeout: 30000}),
   relaunch: () => request('../@launcher/relaunch', {method: 'POST', body: {}, timeout: 60000}),
 
+  // -- this app's own server: the code behind an RPC, and agent sessions (Claude Code, Codex) --------
+  source: (cls, method) => request(`api/source?class=${segment(cls)}&method=${segment(method)}`),
+  agent: {
+    status: () => request('api/agent/status'),
+    create: options => request('api/agent/sessions', {method: 'POST', body: options, timeout: 30000}),
+    events: (id, after, wait = 20) => request(`api/agent/sessions/${segment(id)}/events?after=${after}&wait=${wait}`, {timeout: (wait + 10) * 1000}),
+    send: (id, text) => request(`api/agent/sessions/${segment(id)}/message`, {method: 'POST', body: {text}}),
+    permission: (id, requestId, allow, session = false) => request(`api/agent/sessions/${segment(id)}/permission`, {method: 'POST', body: {requestId, allow, session}}),
+    interrupt: id => request(`api/agent/sessions/${segment(id)}/interrupt`, {method: 'POST', body: {}}),
+    close: id => request(`api/agent/sessions/${segment(id)}`, {method: 'DELETE'}),
+  },
+
   // -- Desktop --------------------------------------------------------------------------------------
   zenoh: () => request('../../gateways/desktop/management/gateways/zenoh'),
   rates: () => request('../../gateways/desktop/topics/rates'),

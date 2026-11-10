@@ -13,9 +13,8 @@ every panel and every hologram is built from what the dimos gateway says is runn
 - **Blueprint**: the catalog, launch, stop and restart (through Desktop's Launcher, so a launch gets your saved config).
 - **Modules**: every module instance of the run, as a list and as a ring of plates around the table. An arc
   joins two modules that share a topic; pulses run from writer to reader at the topic's measured rate.
-- **A module**: its docstring, process and CPU, its streams with live rates, and its RPCs. Each RPC opens
-  into a form made from its signature (toggle for `bool`, choices for `Literal`/`Enum`, number and text
-  boxes, JSON for the rest) with a CALL button and the result. Restart and Unload need a second press.
+- **A module**: its docstring, process and CPU, its streams with live rates, and its RPCs (below).
+  Restart and Unload need a second press.
 - **Layers**: the streams that have a drawing, placed by tf.
 
   | message | drawn as |
@@ -28,14 +27,84 @@ every panel and every hologram is built from what the dimos gateway says is runn
   | `nav_msgs.Path`, `nav_msgs.OccupancyGrid` | a line, a textured plane |
   | `tf2_msgs.TFMessage` | frame axes |
 
-- **Agent**: a chat with the agent of an agentic blueprint (`/human_input`, `/agent`, `/agent_idle`), typed
-  or dictated. Desktop's own agent and the `dimos agent` harness are not reachable from this page yet.
+- **Control**: the robot's controls, found from the blueprint (below).
+- **Agent**: a chat with Claude Code or Codex on this machine, or with the agent of an agentic blueprint (below).
 - **Logs**, **Load** (per-process CPU and memory, per-topic rate and bytes) and **View** (scale, floor, lid, life size).
 
 Desktop is told what the app shows, so an agent that asks Desktop can know what you are looking at, and
 `POST /gateways/desktop/views/<app>/highlight {"kind": "module", "id": "<module id>"}` flashes that module.
 
-## Controls
+## Calling an RPC
+
+![An RPC form: values to pick, a slider over the joint's limits, the code, an agent's reading of it](docs/images/rpc-form.png)
+
+An RPC opens into a form made from its signature. The form is built so that nothing has to be guessed:
+
+- **The editor fits the type.** `bool` is a switch, `Literal`/`Enum` are choices, `list[float]` and tuples
+  are typed as `0.1, 0.2, 0.3`, `list[str]` as `a, b`, `dict` as `key=value, other=2`. No JSON is needed
+  (it is still accepted).
+- **Help comes from the docstring** (`Args:`), next to each parameter.
+- **Values come from what runs.** A parameter that names a joint, a frame, a topic or a module lists the
+  ones that exist; typing narrows the list. A position next to a chosen joint gets a slider over that
+  joint's limits from the robot model.
+- **CODE** shows the method's Python source from the dimos checkout Desktop runs.
+- **EXPLAIN** hands the signature and the source to Claude Code or Codex. The answer says what the call
+  does, what each parameter means and whether it moves the robot, and gives values that work
+  (**USE EXAMPLE**). It is kept for the next time that class runs.
+- **A Python object cannot be sent from a page** (the gateway passes JSON through). For such a parameter
+  (`Twist`, `PoseStamped`) the form says so, names the stream of the same type the module reads, and
+  **HAND TO AGENT** puts the call in the agent's chat.
+- The pin puts a filled-in call into **Control → ACTIONS** as one button. The last values that worked are remembered.
+
+RPCs that the blueprint's own start-up calls (`deliver_*`) fold away under the others.
+
+## Driving the robot
+
+![The Control panel while driving the simulated G1](docs/images/control.png)
+
+**CONTROL** is built from the streams the modules read and the RPCs they offer:
+
+| the blueprint has | Control shows |
+|---|---|
+| a `Twist` stream a module reads | **DRIVE**: a pad, keys `W S` (forward, back) `A D` (turn) `Q E` (slide), `Space` stops; in a headset the left stick moves and the right stick turns |
+| `Float32`, `Int32`, `Bool` streams | **SET**: a slider or a switch (below) |
+| a `PoseStamped` or `PointStamped` navigation goal | **SET**: POINT AT IT, then press a place on the table |
+| a `JointState` command stream, or an RPC `(name: str, position: float)` | **JOINTS**: a slider per joint over its limits, with the measured position marked |
+| RPCs that need no arguments, and pinned calls | **ACTIONS**: one button each |
+| `status()` RPCs | a line of what each module reports, read while the panel is open |
+
+A stream of numbers does not say what its number means. Each slider has two settings for that: its range,
+and whether the value **STAYS SET** (a set point, sent when it changes) or acts only **WHILE HELD** (a rate,
+sent for as long as you hold the slider, then zero). **ASK WHAT IT EXPECTS** has Claude Code or Codex read
+the handler in the code and set both, with a line that says what the number does.
+
+Nothing is sent until you press **ARM**. A drive publishes only while the pad, a key or a stick is held;
+the first input stores a stop command on Desktop's gateway, which sends it if the page goes away. **STOP**
+sends zero on every drive stream. Closing the panel makes the controls safe.
+
+One app at a time may command a robot (the gateway's lease). The first command takes it, also from
+another app such as Controller; if another app takes it back, the panel says so and your next press
+takes it again.
+
+## Agents
+
+![Codex asking before a command leaves its sandbox](docs/images/agent.png)
+
+**AGENT** has three tabs:
+
+- **CLAUDE** and **CODEX**: the app's server starts Claude Code (`claude`) or Codex (`codex`) on this machine,
+  in the dimos checkout Desktop uses, with the login that program already has (your subscription; no API
+  key is used, and one in the environment is removed). It is the same agent as in a terminal, with your
+  settings, skills and MCP servers. Text streams in, each tool call is a row you can open, and a
+  permission prompt is a card with ALLOW and DENY (Codex also ALWAYS, for the session). STOP ends a turn.
+  MODEL and EFFORT apply to the next session; CONTINUE LAST resumes the last conversation.
+- **ROBOT AGENT**: the agent inside an agentic blueprint (`/human_input`, `/agent`, `/agent_idle`).
+
+The agent is told where Desktop's gateways are and what you have on screen. Codex runs commands in its
+sandbox, which has no network, so it asks before a command that reaches the gateway.
+Desktop's own agent (dimcode) and the `dimos agent` harness are not wired in.
+
+## Pointing, moving, typing
 
 | | screen | headset |
 |---|---|---|
@@ -56,7 +125,8 @@ dimos-desktop install /absolute/path/to/this/repo --name dim-spatial-desktop --r
 ```
 
 Then open **Spatial Desktop** in Desktop, or `http://127.0.0.1:5555/apps/dim-spatial-desktop/` in its own tab.
-It is a static app: no build step, no server.
+Desktop builds the app's server with nix (a Deno script; the page itself has no build step).
+An open page reloads itself when the app is updated.
 
 ### In a headset
 
@@ -73,15 +143,25 @@ This was developed against an emulated headset (see below). It has not been run 
 ## Develop
 
 ```sh
-./sync.sh                                 # copy the working tree into Desktop's install of the app
-dimos-desktop app check .                 # every gateway call is declared in dimos.yaml
+./dev.sh hot                              # Desktop serves this working tree; saved files reach open pages
+./dev.sh restart                          # after a change under server/ or to dimos.yaml
+./dev.sh release                          # back to the committed build
+dimos-desktop app check .                 # every gateway call and route is declared in dimos.yaml
+deno check server/main.ts
 for f in $(find frontend/src -name '*.js'); do node --check "$f"; done
 ```
 
 Append `?emulate` to the URL for an in-page WebXR runtime ([IWER](https://github.com/meta-quest/immersive-web-emulation-runtime)):
 `window.xrDevice` then drives a virtual headset, controllers and hands, and `window.spatial` is the app.
+AGENTS.md says how the code is laid out and where an addition goes.
 
 ## Limits
+
+- The headset paths ran only in the emulator. Stick driving, panels and hands have not been tried on a device.
+- Controls are found by type and by name. A stream or an RPC that does not follow the usual shapes is not
+  offered; call it from its module's panel.
+- An RPC that takes a Python object cannot be called from the page.
+- The agents need `claude` or `codex` installed and logged in on the machine that runs Desktop.
 
 - One blueprint at a time, as the gateway.
 - A `UrdfManager` given several models answers `*.urdf` with the first. The others are asked for by the

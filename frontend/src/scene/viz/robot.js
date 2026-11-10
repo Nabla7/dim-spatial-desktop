@@ -77,7 +77,14 @@ export function parseUrdf(xml) {
     }
     links.push({link: link.getAttribute('name'), visuals});
   }
-  return {name: robot.getAttribute('name') || 'robot', links};
+  // Joint limits, for controls that move a joint: name -> {type, lower, upper}.
+  const joints = {};
+  for (const joint of robot.querySelectorAll(':scope > joint')) {
+    const limit = joint.querySelector(':scope > limit'), type = joint.getAttribute('type');
+    if (type === 'fixed') continue;
+    joints[joint.getAttribute('name')] = {type, lower: limit?.hasAttribute('lower') ? +limit.getAttribute('lower') : null, upper: limit?.hasAttribute('upper') ? +limit.getAttribute('upper') : null};
+  }
+  return {name: robot.getAttribute('name') || 'robot', links, joints};
 }
 
 // Mesh file bytes -> an Object3D in the URDF's own (z up) coordinates.
@@ -136,7 +143,7 @@ export class RobotLayer extends Layer {
     super(layers, {kind: 'robot', label: 'Robot model', topic: files, glyph: 'robot'});
     this.requestTopic = request; this.links = new Map(); this.pending = new Map(); this.queue = [];
     this.style = 'holo'; this.model = null; this.models = new Map(); this.asked = new Set(); this.loaded = 0; this.total = 0;
-    this.uniforms = {time: {value: 0}}; this.materials = []; this.triangles = 0; this.wanted = new Set(); this.tries = new Map(); this.sizes = new Set();
+    this.uniforms = {time: {value: 0}}; this.materials = []; this.triangles = 0; this.wanted = new Set(); this.tries = new Map(); this.sizes = new Set(); this.jointLimits = {};
   }
 
   // scenery: a model that is the surroundings rather than the robot is drawn fainter, and never hides the robot.
@@ -255,6 +262,7 @@ export class RobotLayer extends Layer {
 
   build(model) {
     this.model ||= model;
+    Object.assign(this.jointLimits, model.joints);
     const wanted = new Set(), scenery = model !== this.model && model.links.length === 1;
     for (const {link, visuals} of model.links) {
       if (this.links.has(link)) continue;

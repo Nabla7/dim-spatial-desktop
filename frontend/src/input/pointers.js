@@ -73,6 +73,8 @@ export class Pointers {
     }
     if (this.text.active) this.text.blur();
     if (hit?.type === 'pick' && !grabOnly) { pointer.press = {type: 'pick', object: hit.object}; return; }
+    // A press on the table can be an answer to "point at it" (a goal waiting for a place).
+    if (!grabOnly && this.offerTablePoint(pointer)) { pointer.press = {type: 'given'}; return; }
     pointer.press = {type: 'world'};
     if (pointer.kind !== 'mouse') this.beginWorldGrab(pointer);
   }
@@ -90,6 +92,13 @@ export class Pointers {
       this.endWorldGrab(pointer);
       if (pointer.kind === 'mouse' && !pointer.dragged) this.onEmptyClick?.();
     }
+  }
+
+  // onTablePoint(point in the robot's fixed frame) returns true when it used the point.
+  offerTablePoint(pointer) {
+    if (!this.onTablePoint) return false;
+    const point = this.tablePoint(pointer);
+    return !!point && this.onTablePoint(this.stage.toRobot(point.clone())) === true;
   }
 
   // -- moving a panel -------------------------------------------------------------------------------
@@ -138,7 +147,11 @@ export class Pointers {
   // -- holding the world ----------------------------------------------------------------------------
   // The hand's position, or for the mouse where its ray meets the table's plane.
   grabPoint(pointer) {
-    if (pointer.kind !== 'mouse') return pointer.grip.clone();
+    return pointer.kind !== 'mouse' ? pointer.grip.clone() : this.tablePoint(pointer);
+  }
+
+  // Where a pointer's ray meets the table's plane (scene coordinates), or null if it points away from it.
+  tablePoint(pointer) {
     const origin = this.stage.root.worldToLocal(pointer.ray.origin.clone());
     const direction = pointer.ray.direction.clone().transformDirection(_inverse.copy(this.stage.root.matrixWorld).invert());
     const t = -origin.y / direction.y;
@@ -212,6 +225,7 @@ export class Pointers {
       if (pointer.hit) { this.orbit.enabled = false; element.setPointerCapture(event.pointerId); if (event.button === 0) this.press(pointer); return; }
       // Empty space: the left button orbits (OrbitControls), the right button slides the world across the table.
       if (event.button === 2) { this.orbit.enabled = false; pointer.press = {type: 'world'}; this.beginWorldGrab(pointer); }
+      else if (this.offerTablePoint(pointer)) { this.orbit.enabled = false; pointer.press = {type: 'given'}; }
       else { pointer.press = {type: 'world'}; if (this.text.active) this.text.blur(); }
     }, true);
     const up = event => {
@@ -334,10 +348,12 @@ export class Pointers {
     // Thumbsticks: over a panel the stick scrolls it; otherwise the right stick turns and zooms the world
     // and the left stick slides it.
     const overPanel = side => [...this.sources.values()].find(p => p.handedness === side && p.hit?.type === 'panel');
+    // While the robot's drive is armed, a stick that is not scrolling a panel drives the robot and no longer moves the view.
+    const idle = [0, 0], driving = this.driveSticks?.(overPanel('left') ? idle : this.sticks.left, overPanel('right') ? idle : this.sticks.right) === true;
     for (const side of ['left', 'right']) {
       const [x, y] = this.sticks[side], pointer = overPanel(side);
       if (pointer && y && !pointer.panelGrab) { pointer.hit.panel.scroll(pointer.hit.x, pointer.hit.y, y * dt * 900); continue; }
-      if (pointer?.panelGrab || this.worldGrabs.size) continue;
+      if (driving || pointer?.panelGrab || this.worldGrabs.size) continue;
       const stage = this.stage;
       if (side === 'right') {
         if (x) stage.target.yaw = stage.view.yaw -= x * dt * 1.6;

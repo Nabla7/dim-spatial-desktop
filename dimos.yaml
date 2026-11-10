@@ -11,6 +11,8 @@ provides:
   # The agent bridge runs a coding agent as this user: only this app's own pages may reach it.
   x-private:
     - api/agent/*
+    - api/version
+    - api/source
 uses:
   "@dimos-gateway":
     - GET active

@@ -40,7 +40,9 @@ export class Bus extends EventTarget {
         import(new URL('../../gateways/dimos/msgs.js', location.href).href),
       ]);
       this.msgs = msgs;
-      this.client = await connect(new URL(this.info.zenohGatewayUrl, location.href).href, {heartbeatHz: 0});
+      // The heartbeat is what a publisher's deadman hangs on: if this page stops (a crash, a dead link),
+      // the gateway publishes the stored stop value for every drive it had armed.
+      this.client = await connect(new URL(this.info.zenohGatewayUrl, location.href).href, {heartbeatHz: 5, heartbeatMisses: 3});
       this.state = this.client.state;
       this.client.onState(state => { this.state = state; this.dispatchEvent(new Event('state')); });
       this.dispatchEvent(new Event('state'));

@@ -9,6 +9,7 @@ import {openAgent} from './agent.js';
 import {openLogs} from './logs.js';
 import {openStats} from './stats.js';
 import {openView} from './view.js';
+import {openControl} from './control.js';
 
 const PHASE_TONE = {starting: 'warn', running: 'ok', stopping: 'warn', failed: 'danger', stopped: 'muted'};
 
@@ -20,7 +21,9 @@ export function openShell(app) {
       const toast = app.toasts[0];
       const brand = ui.text('DIMOS', content.x + 6, content.cy + 1, {size: SIZE.sm, family: 'display', color: ui.tone('primary'), track: 4});
       ui.text('SPATIAL', content.x + 22 + brand, content.cy + 1, {size: SIZE.xs, family: 'display', color: ui.tone('muted'), track: 3});
-      if (toast) {
+      if (app.controls.armed && !toast) {
+        ui.text(app.controls.blocked ? 'CONTROLS HELD BY ANOTHER APP' : app.controls.moving ? 'DRIVING' : 'CONTROLS ARMED', content.cx + 20, content.cy + 1, {size: SIZE.sm, family: 'display', color: ui.tone('warn'), align: 'center', track: 3});
+      } else if (toast) {
         ui.text(toast.message, content.cx + 20, content.cy + 1, {size: SIZE.sm, weight: 500, color: ui.tone(toast.tone === 'info' ? 'fg' : toast.tone), align: 'center', max: content.w - 520});
       } else if (blueprint.name) {
         const started = blueprint.startedAt ? (Date.now() - Date.parse(blueprint.startedAt)) / 1000 : NaN;
@@ -40,17 +43,21 @@ export function openShell(app) {
   for (const type of ['change', 'modules']) blueprint.addEventListener(type, () => head.invalidate());
   app.bus.addEventListener('state', () => head.invalidate());
   app.addEventListener('toast', () => head.invalidate());
+  app.controls.addEventListener('change', () => head.invalidate());
+  app.controls.addEventListener('drive', () => head.invalidate());
   app.dock.open(head, 'head');
 
   const items = [
     ['launcher', 'BLUEPRINT', 'rocket', () => openLauncher(app)],
     ['modules', 'MODULES', 'module', () => openModules(app)],
     ['layers', 'LAYERS', 'layers', () => openLayers(app)],
+    ['control', 'CONTROL', 'robot', () => openControl(app)],
     ['agent', 'AGENT', 'agent', () => openAgent(app)],
     ['logs', 'LOGS', 'log', () => openLogs(app)],
     ['stats', 'STATS', 'pulse', () => openStats(app)],
     ['view', 'VIEW', 'scale', () => openView(app)],
   ];
+  app.openers = Object.fromEntries(items.map(([id, , , open]) => [id, open]));
   const bar = app.panel({
     id: 'bar', bare: true, width: 0.94, height: 0.068,
     draw(ui, content) {

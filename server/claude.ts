@@ -1,18 +1,12 @@
 // A Claude Code session as a child process, spoken to in its headless stream-json protocol:
 // user turns go in on stdin, events come out on stdout, and a permission prompt is a request the
-// host answers. The login is whatever `claude` itself is logged in with (the user's subscription);
-// no API key passes through here, and one in the environment is removed so it cannot take over.
-//
-// The CLI's events are reduced to the few a chat panel draws, numbered, and kept so a page can ask
-// for "everything after n" and wait for more.
+// host answers. The login is whatever `claude` itself is logged in with (the user's subscription).
+import { AgentSession, agentEnv, type Choice, clip, findCommand, readLines, type SessionOptions } from "./session.ts";
 
-export type AgentEvent = { seq: number; t: string; [key: string]: unknown };
+export const findClaude = () => findCommand(["claude"], ["~/.claude/local/claude"]);
 
-type Waiter = () => void;
-
-const LOG_LIMIT = 4000, TEXT_LIMIT = 6000;
-
-const clip = (text: string, limit = TEXT_LIMIT) => text.length > limit ? `${text.slice(0, limit)}\n… (${text.length - limit} more characters)` : text;
+export const CLAUDE_MODELS: Choice[] = [{ id: "", label: "default" }, { id: "fable", label: "fable" }, { id: "opus", label: "opus" }, { id: "sonnet", label: "sonnet" }, { id: "haiku", label: "haiku" }];
+export const CLAUDE_EFFORTS: Choice[] = [{ id: "", label: "default" }, { id: "low", label: "low" }, { id: "medium", label: "medium" }, { id: "high", label: "high" }, { id: "xhigh", label: "xhigh" }];
 
 // A tool result's content is a string or a list of blocks; the panel shows text.
 function resultText(content: unknown): string {
@@ -21,67 +15,29 @@ function resultText(content: unknown): string {
   return content == null ? "" : JSON.stringify(content);
 }
 
-export async function findClaude(): Promise<string | null> {
-  const home = Deno.env.get("HOME") ?? "";
-  const candidates = [
-    ...(Deno.env.get("PATH") ?? "").split(":").filter(Boolean).map((dir) => `${dir}/claude`),
-    `${home}/.local/bin/claude`, `${home}/.claude/local/claude`, "/opt/homebrew/bin/claude", "/usr/local/bin/claude",
-  ];
-  for (const path of candidates) {
-    try { if ((await Deno.stat(path)).isFile) return path; } catch { /* not there */ }
-  }
-  return null;
-}
-
-export class ClaudeSession {
-  readonly id = crypto.randomUUID();
-  readonly startedAt = Date.now();
-  events: AgentEvent[] = [];
-  sessionId: string | null = null;   // Claude Code's own id, for --resume
-  model: string | null = null;
-  busy = false;
-  exited: number | null = null;
-  #seq = 0;
-  #waiters: Waiter[] = [];
+export class ClaudeSession extends AgentSession {
+  readonly backend = "claude";
   #process: Deno.ChildProcess;
   #stdin: WritableStreamDefaultWriter<Uint8Array>;
   #encoder = new TextEncoder();
   #pending = new Map<string, unknown>();  // permission request id -> the tool input asked about
+  #stopping = false;                      // the user asked for the turn that runs to stop
 
-  constructor(readonly command: string, readonly cwd: string, options: { systemPrompt?: string; model?: string; resume?: string } = {}) {
+  constructor(command: string, cwd: string, options: SessionOptions = {}) {
+    super(command, cwd);
     const args = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--permission-prompt-tool", "stdio"];
     if (options.systemPrompt) args.push("--append-system-prompt", options.systemPrompt);
     if (options.model) args.push("--model", options.model);
+    if (options.effort) args.push("--effort", options.effort);
     if (options.resume) args.push("--resume", options.resume);
-    const env = { ...Deno.env.toObject() };
-    for (const name of ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "DIMOS_APP"]) delete env[name];
-    // Desktop starts app servers with a short PATH; the tools Claude runs need the user's.
-    const home = env.HOME ?? "";
-    env.PATH = [env.PATH, `${home}/.local/bin`, "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"].filter(Boolean).join(":");
+    // In -p mode an API key in the environment is always used when present; without one Claude Code uses its
+    // own login. CLAUDECODE marks a process as running inside Claude Code, which this child is not.
+    const env = agentEnv(["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDECODE"]);
     this.#process = new Deno.Command(command, { args, cwd, env, clearEnv: true, stdin: "piped", stdout: "piped", stderr: "piped" }).spawn();
     this.#stdin = this.#process.stdin.getWriter();
-    this.#read(this.#process.stdout, (line) => this.#onLine(line));
-    this.#read(this.#process.stderr, (line) => { if (line.trim()) this.#push({ t: "stderr", text: clip(line, 600) }); });
-    this.#process.status.then((status) => { this.exited = status.code; this.busy = false; this.#push({ t: "exit", code: status.code }); });
-  }
-
-  async #read(stream: ReadableStream<Uint8Array>, onLine: (line: string) => void) {
-    const reader = stream.pipeThrough(new TextDecoderStream()).getReader();
-    let rest = "";
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      rest += value;
-      let end: number;
-      while ((end = rest.indexOf("\n")) >= 0) { onLine(rest.slice(0, end)); rest = rest.slice(end + 1); }
-    }
-    if (rest) onLine(rest);
-  }
-
-  #push(event: Record<string, unknown>) {
-    this.events.push({ ...event, seq: ++this.#seq } as AgentEvent);
-    if (this.events.length > LOG_LIMIT) this.events.splice(0, this.events.length - LOG_LIMIT);
-    for (const wake of this.#waiters.splice(0)) wake();
+    readLines(this.#process.stdout, (line) => this.#onLine(line));
+    readLines(this.#process.stderr, (line) => { if (line.trim()) this.push({ t: "stderr", text: clip(line, 600) }); });
+    this.#process.status.then((status) => { this.exited = status.code; this.busy = false; this.push({ t: "exit", code: status.code }); });
   }
 
   async #write(message: unknown) {
@@ -89,23 +45,22 @@ export class ClaudeSession {
     await this.#stdin.write(this.#encoder.encode(JSON.stringify(message) + "\n"));
   }
 
-  // deno-lint-ignore no-explicit-any
   #onLine(line: string) {
     // deno-lint-ignore no-explicit-any
     let event: any;
-    try { event = JSON.parse(line); } catch { if (line.trim()) this.#push({ t: "stderr", text: clip(line, 600) }); return; }
+    try { event = JSON.parse(line); } catch { if (line.trim()) this.push({ t: "stderr", text: clip(line, 600) }); return; }
     switch (event.type) {
       case "system":
         if (event.subtype === "init") {
           this.sessionId = event.session_id; this.model = event.model;
-          this.#push({ t: "init", sessionId: event.session_id, model: event.model, mode: event.permissionMode, cwd: event.cwd, version: event.claude_code_version });
+          this.push({ t: "init", sessionId: event.session_id, model: event.model, mode: event.permissionMode, cwd: event.cwd, version: event.claude_code_version });
         }
         break;
       case "stream_event": {
         const inner = event.event;
-        if (inner?.type === "content_block_start" && inner.content_block?.type === "thinking") this.#push({ t: "thinking" });
-        if (inner?.type === "content_block_start" && inner.content_block?.type === "tool_use") this.#push({ t: "tool_start", id: inner.content_block.id, name: inner.content_block.name });
-        if (inner?.type === "content_block_delta" && inner.delta?.type === "text_delta") this.#push({ t: "delta", text: inner.delta.text });
+        if (inner?.type === "content_block_start" && inner.content_block?.type === "thinking") this.push({ t: "thinking" });
+        if (inner?.type === "content_block_start" && inner.content_block?.type === "tool_use") this.push({ t: "tool_start", id: inner.content_block.id, name: inner.content_block.name });
+        if (inner?.type === "content_block_delta" && inner.delta?.type === "text_delta") this.push({ t: "delta", text: inner.delta.text });
         break;
       }
       case "assistant": {
@@ -115,34 +70,42 @@ export class ClaudeSession {
           block.type === "text" ? { type: "text", text: block.text }
             : block.type === "tool_use" ? { type: "tool", id: block.id, name: block.name, input: block.input }
             : null).filter(Boolean);
-        if (blocks.length) this.#push({ t: "assistant", id: event.message?.id, blocks });
+        if (blocks.length) this.push({ t: "assistant", id: event.message?.id, blocks });
         break;
       }
       case "user": {
         if (event.parent_tool_use_id) break;
         const content = event.message?.content;
         if (!Array.isArray(content)) break;
-        for (const block of content) if (block?.type === "tool_result") this.#push({ t: "tool_result", id: block.tool_use_id, text: clip(resultText(block.content)), error: !!block.is_error });
+        for (const block of content) if (block?.type === "tool_result") this.push({ t: "tool_result", id: block.tool_use_id, text: clip(resultText(block.content)), error: !!block.is_error });
         break;
       }
       case "control_request": {
         const request = event.request ?? {};
         if (request.subtype === "can_use_tool") {
           this.#pending.set(event.request_id, request.input ?? {});
-          this.#push({ t: "permission", requestId: event.request_id, tool: request.tool_name, title: request.display_name ?? request.tool_name, input: request.input ?? {}, description: request.description ?? "" });
+          this.push({ t: "permission", requestId: event.request_id, tool: request.tool_name, title: `use ${request.display_name ?? request.tool_name}`, input: request.input ?? {}, description: request.description ?? "" });
         } else {
           // Nothing else was asked for at start-up (no hooks, no SDK MCP servers): say so rather than leave it waiting.
           this.#write({ type: "control_response", response: { subtype: "error", request_id: event.request_id, error: `unsupported request ${request.subtype}` } }).catch(() => {});
         }
         break;
       }
-      case "result":
-        this.busy = false;
-        this.#push({ t: "result", ok: !event.is_error, subtype: event.subtype, text: typeof event.result === "string" ? clip(event.result) : "", costUsd: event.total_cost_usd ?? null, ms: event.duration_ms ?? null, turns: event.num_turns ?? null });
+      case "control_cancel_request":
+        // The CLI withdrew a prompt it had asked (the turn was interrupted, a rule answered it).
+        if (this.#pending.delete(event.request_id)) this.push({ t: "permission_answer", requestId: event.request_id, allow: false, withdrawn: true });
         break;
+      case "result": {
+        // A turn the user stopped ends as an error of the CLI's; to the page it was stopped.
+        const subtype = this.#stopping ? "interrupted" : event.subtype;
+        this.busy = false; this.#stopping = false;
+        this.push({ t: "result", ok: !event.is_error, subtype, text: typeof event.result === "string" ? clip(event.result) : "", costUsd: event.total_cost_usd ?? null, ms: event.duration_ms ?? null, turns: event.num_turns ?? null });
+        break;
+      }
       case "rate_limit_event": {
         const windows = event.rate_limit_info?.unifiedWindows ?? {};
-        this.#push({ t: "limits", status: event.rate_limit_info?.status, fiveHour: windows.five_hour?.utilization ?? null, sevenDay: windows.seven_day?.utilization ?? null });
+        const list = [["5 h", windows.five_hour], ["7 d", windows.seven_day]].filter(([, window]) => window?.utilization != null).map(([label, window]) => ({ label, used: window.utilization, resetsAt: window.resets_at ?? null }));
+        if (list.length) this.push({ t: "limits", status: event.rate_limit_info?.status, windows: list });
         break;
       }
     }
@@ -150,35 +113,23 @@ export class ClaudeSession {
 
   async send(text: string) {
     this.busy = true;
-    this.#push({ t: "user", text });
-    await this.#write({ type: "user", message: { role: "user", content: [{ type: "text", text }] } });
+    this.push({ t: "user", text });
+    await this.#write({ type: "user", session_id: "", parent_tool_use_id: null, message: { role: "user", content: [{ type: "text", text }] } });
   }
 
-  // The answer to a permission prompt. Allowing hands the tool its input back unchanged.
-  async answer(requestId: string, allow: boolean, message = "The user declined this action.") {
+  // Allowing hands the tool its input back unchanged. Claude Code has no "for the session" answer on this channel.
+  async answer(requestId: string, allow: boolean, options: { message?: string } = {}) {
     if (!this.#pending.has(requestId)) throw new Error("no such permission request (already answered?)");
     const input = this.#pending.get(requestId);
     this.#pending.delete(requestId);
-    await this.#write({ type: "control_response", response: { subtype: "success", request_id: requestId, response: allow ? { behavior: "allow", updatedInput: input } : { behavior: "deny", message } } });
-    this.#push({ t: "permission_answer", requestId, allow });
+    await this.#write({ type: "control_response", response: { subtype: "success", request_id: requestId, response: allow ? { behavior: "allow", updatedInput: input } : { behavior: "deny", message: options.message || "The user declined this action." } } });
+    this.push({ t: "permission_answer", requestId, allow });
   }
 
   async interrupt() {
+    if (!this.busy) return;
+    this.#stopping = true;
     await this.#write({ type: "control_request", request_id: crypto.randomUUID(), request: { subtype: "interrupt" } });
-  }
-
-  // Events after `after`; waits up to `waitMs` when there are none yet.
-  async eventsAfter(after: number, waitMs: number): Promise<{ events: AgentEvent[]; reset: boolean }> {
-    const reset = this.events.length > 0 && after < this.events[0].seq - 1;
-    let found = this.events.filter((event) => event.seq > after);
-    if (!found.length && waitMs > 0 && this.exited === null) {
-      await new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, waitMs);
-        this.#waiters.push(() => { clearTimeout(timer); resolve(); });
-      });
-      found = this.events.filter((event) => event.seq > after);
-    }
-    return { events: found, reset };
   }
 
   close() {

@@ -17,9 +17,11 @@ import {XRManager} from './xr/session.js';
 import {Bus} from './data/bus.js';
 import {Blueprint} from './data/blueprint.js';
 import {gateway} from './data/gateway.js';
+import {Controls} from './data/controls.js';
 import {openShell} from './panels/shell.js';
 import {openLauncher} from './panels/launcher.js';
 import {openModules} from './panels/modules.js';
+import {openModule} from './panels/module.js';
 import {openKeyboard} from './panels/keyboard.js';
 
 const TABLE = new THREE.Vector3(0, 0.95, 0), FOV = 50;
@@ -63,9 +65,13 @@ export class App extends EventTarget {
     this.blueprint = new Blueprint(this.bus);
     this.layers = new Layers(this);
     this.halo = new Halo(this);
+    this.controls = new Controls(this);
+    this.pointers.onTablePoint = point => this.controls.place(point);
+    this.pointers.driveSticks = (left, right) => this.controls.sticks(left, right);
     this.toasts = []; this.selected = null; this.last = performance.now();
 
     openShell(this);
+    this.reopen();
     this.blueprint.start();
     // The left side shows what matters now: the catalog while nothing runs, the modules once something does.
     let wasRunning = null;
@@ -88,6 +94,33 @@ export class App extends EventTarget {
     addEventListener('resize', () => this.resize());
     this.followDesktop();
     renderer.setAnimationLoop((time, frame) => this.frame(time, frame));
+  }
+
+  // -- staying current (update.js) --------------------------------------------------------------------
+  // Why the page must not reload right now, or null when it may.
+  holdReload() {
+    if (this.xr.presenting) return 'you leave the headset view';
+    if (this.controls.armed) return 'the controls are safe again';
+    if (this.agents?.some(agent => agent.busy && agent.session)) return 'the agent has finished';
+    if (this.text.active && this.text.value.trim()) return 'you finish typing';
+    return null;
+  }
+
+  // What a reload should bring back: the panels that were open.
+  beforeReload() {
+    const open = this.dock.panels.filter(panel => !panel.closing).map(panel => panel.id).filter(id => !['head', 'bar', 'keyboard'].includes(id));
+    sessionStorage.setItem('spatial.reopen', JSON.stringify({at: Date.now(), open}));
+  }
+
+  // After a reload the page made itself: the panels that were open come back (a module's panel once
+  // the modules are known).
+  reopen() {
+    let kept = null;
+    try { kept = JSON.parse(sessionStorage.getItem('spatial.reopen') || 'null'); sessionStorage.removeItem('spatial.reopen'); } catch { /* no storage */ }
+    if (!kept || Date.now() - kept.at > 20000) return;
+    for (const id of kept.open) if (this.openers[id] && !this.dock.has(id)) this.openers[id]();
+    const modules = kept.open.filter(id => id.startsWith('module:')).map(id => id.slice(7));
+    if (modules.length) this.blueprint.addEventListener('modules', () => { for (const id of modules) if (this.blueprint.module(id) && !this.dock.has(`module:${id}`)) openModule(this, id); }, {once: true});
   }
 
   // A panel wired to this app's text entry.
@@ -181,6 +214,7 @@ export class App extends EventTarget {
     this.dock.setMode('hud');
     this.backdrop.setPassthrough(false);
     this.hands.hide();
+    this.controls.setInput('sticks', 0, 0, 0);
     this.stage.root.position.copy(TABLE); this.stage.root.rotation.set(0, 0, 0);
     this.stage.setLifeSize(false);
     // A session leaves the headset's field of view on the camera; the screen has its own.
@@ -206,6 +240,7 @@ export class App extends EventTarget {
     else this.orbit.update();
     this.stage.update(time / 1000, dt);
     this.pointers.update(dt, xrFrame, this.theme.three.primary);
+    this.controls.tick(now);
     this.layers.update(dt, now);
     this.halo.update(dt, now);
     this.dock.update(now, dt);

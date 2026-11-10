@@ -144,6 +144,8 @@ export class HoloPanel {
     const press = this.presses.get(pointer);
     this.presses.delete(pointer);
     this.invalidate();
+    // A held control (a drive pad) hears the release wherever the pointer ended up.
+    if (press?.region.onUp) press.region.onUp();
     if (!press || press.scrolling) return;
     const region = x === null ? null : this.regionAt(x, y);
     if (region && region.id === press.region.id && region.onClick) region.onClick(x, y);
@@ -151,6 +153,12 @@ export class HoloPanel {
 
   pointerLeave(pointer) {
     if (this.hots.delete(pointer)) this.invalidate();
+  }
+
+  // Drop every press without acting on it (the panel is going away, the pointer was lost).
+  cancelPresses() {
+    for (const press of this.presses.values()) press.region.onUp?.();
+    this.presses.clear();
   }
 
   scroll(x, y, delta) {
@@ -165,7 +173,7 @@ export class HoloPanel {
   get closed() { return this.closing && performance.now() - this.closing > 220; }
 
   dispose() {
-    this.abort.abort(); this.onDispose?.();
+    this.cancelPresses(); this.abort.abort(); this.onDispose?.();
     this.group.removeFromParent(); this.texture.dispose(); this.mesh.geometry.dispose(); this.mesh.material.dispose();
   }
 }
@@ -187,7 +195,7 @@ export class Ui {
     const absolute = this.shift ? new Rect(rect.x, rect.y - this.shift, rect.w, rect.h) : rect;
     const panel = this.panel, wrap = handler => handler && ((...args) => { handler(...args); panel.invalidate(); });
     panel.regions.push({...handlers, rect: absolute, clip: this.clip,
-      onClick: wrap(handlers.onClick), onDrag: wrap(handlers.onDrag), onDown: wrap(handlers.onDown)});
+      onClick: wrap(handlers.onClick), onDrag: wrap(handlers.onDrag), onDown: wrap(handlers.onDown), onUp: wrap(handlers.onUp)});
   }
 
   // -- text -----------------------------------------------------------------------------------------
@@ -379,12 +387,14 @@ export class Ui {
     this.region(rect, {id, onClick: enabled ? () => onChange(!value) : null});
   }
 
-  slider(rect, value, min, max, onChange, {id, tone = 'primary', step = 0, format = v => v.toFixed(2)} = {}) {
+  // `mark` draws a second, small tick on the rail (a measured value next to the commanded one).
+  slider(rect, value, min, max, onChange, {id, tone = 'primary', step = 0, format = v => v.toFixed(2), enabled = true, onRelease = null, mark = null} = {}) {
     const ctx = this.ctx, hot = this.isHot(id) || this.isDown(id), rail = new Rect(rect.x + 6, rect.cy - 2, rect.w - 96, 4);
     const t = Math.max(0, Math.min(1, (value - min) / (max - min || 1)));
     ctx.fillStyle = this.tone('muted', 0.3); ctx.fillRect(rail.x, rail.y, rail.w, rail.h);
     ctx.fillStyle = this.tone(tone, 0.9); ctx.fillRect(rail.x, rail.y, rail.w * t, rail.h);
     for (let i = 0; i <= 10; i++) ctx.fillRect(rail.x + rail.w * i / 10 - 0.5, rail.y + 8, 1, i % 5 ? 4 : 8);
+    if (mark !== null && Number.isFinite(mark)) { ctx.fillStyle = this.tone('info'); ctx.fillRect(rail.x + rail.w * Math.max(0, Math.min(1, (mark - min) / (max - min || 1))) - 1.5, rect.cy - 9, 3, 7); }
     ctx.shadowColor = this.tone(tone); ctx.shadowBlur = hot ? 16 : 6;
     ctx.fillStyle = this.tone(hot ? 'fg' : tone); ctx.fillRect(rail.x + rail.w * t - 4, rect.cy - 12, 8, 24); ctx.shadowBlur = 0;
     this.text(format(value), rect.r, rect.cy + 1, {size: SIZE.sm, family: 'mono', align: 'right', color: this.tone('fg')});
@@ -393,7 +403,34 @@ export class Ui {
       if (step) next = Math.round(next / step) * step;
       onChange(next);
     };
-    this.region(rect, {id, onDown: set, onDrag: set});
+    if (enabled) this.region(rect, {id, onDown: set, onDrag: set, onUp: onRelease}); else this.region(rect, {id});
+  }
+
+  // A two-axis pad held under a pointer: onMove(x, y) with each in -1..1 (y up) while held, then (0, 0) on release.
+  pad(rect, value, onMove, {id, tone = 'primary', enabled = true, labels = ['', '', '', '']} = {}) {
+    const ctx = this.ctx, radius = Math.min(rect.w, rect.h) / 2 - 6, cx = rect.cx, cy = rect.cy, held = this.isDown(id), hot = this.isHot(id);
+    ctx.beginPath(); ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.fillStyle = this.tone(tone, !enabled ? 0.02 : held ? 0.14 : 0.06); ctx.fill();
+    ctx.strokeStyle = this.tone(enabled ? tone : 'muted', held || hot ? 1 : 0.5); ctx.lineWidth = 1.6; ctx.stroke();
+    ctx.strokeStyle = this.tone(tone, 0.22); ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(cx, cy, radius * 0.5, 0, Math.PI * 2); ctx.moveTo(cx - radius, cy); ctx.lineTo(cx + radius, cy); ctx.moveTo(cx, cy - radius); ctx.lineTo(cx, cy + radius); ctx.stroke();
+    const [up, right, down, left] = labels, faint = this.tone('muted', 0.8);
+    if (up) this.text(up, cx, cy - radius + 14, {size: SIZE.xs - 2, family: 'mono', color: faint, align: 'center'});
+    if (down) this.text(down, cx, cy + radius - 12, {size: SIZE.xs - 2, family: 'mono', color: faint, align: 'center'});
+    if (left) this.text(left, cx - radius + 8, cy, {size: SIZE.xs - 2, family: 'mono', color: faint});
+    if (right) this.text(right, cx + radius - 8, cy, {size: SIZE.xs - 2, family: 'mono', color: faint, align: 'right'});
+    const kx = cx + value[0] * radius, ky = cy - value[1] * radius;
+    ctx.beginPath(); ctx.arc(kx, ky, 15, 0, Math.PI * 2);
+    ctx.shadowColor = this.tone(tone); ctx.shadowBlur = held ? 18 : 8; ctx.fillStyle = this.tone(enabled ? (held ? 'fg' : tone) : 'muted'); ctx.fill(); ctx.shadowBlur = 0;
+    if (!enabled) { this.region(rect, {id}); return; }
+    const move = (x, y) => {
+      let dx = (x - cx) / radius, dy = -(y - cy) / radius;
+      const length = Math.hypot(dx, dy);
+      if (length > 1) { dx /= length; dy /= length; }
+      // A small dead centre, so a press is not already a command.
+      onMove(Math.abs(dx) < 0.08 ? 0 : dx, Math.abs(dy) < 0.08 ? 0 : dy);
+    };
+    this.region(rect, {id, onDown: move, onDrag: move, onUp: () => onMove(0, 0)});
   }
 
   // One of several options, as a row of segments.

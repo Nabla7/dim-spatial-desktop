@@ -1,3 +1,5 @@
 .DS_Store
 result
 node_modules
+hot/
+.result-nix
