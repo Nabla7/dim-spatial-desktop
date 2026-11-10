@@ -77,6 +77,8 @@ export class App extends EventTarget {
         if (!running && !this.dock.has('launcher')) openLauncher(this);
       }
       if (wasRunning !== null) this.toast(running ? `${this.blueprint.name} is starting` : `${this.blueprint.name || 'Blueprint'} stopped`, running ? 'ok' : 'warn');
+      // Panels about a module or a camera of the run that ended have nothing left to show.
+      if (!running) for (const panel of this.dock.panels) if (/^(module|feed):/.test(panel.id)) this.dock.close(panel.id);
       wasRunning = running;
     });
     this.text.addEventListener('focus', () => { if (this.xr.presenting && !this.xr.session?.isSystemKeyboardSupported) openKeyboard(this, true); });
