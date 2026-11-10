@@ -50,7 +50,7 @@ export function openAgent(app) {
   }
 
   const panel = app.panel({
-    id, title: 'Agent', glyph: 'agent', width: 0.46, height: 0.62, onClose: () => app.dock.close(id),
+    id, title: 'Agent', glyph: 'agent', width: 0.46, height: app.dock.sideHeight(0.62), onClose: () => app.dock.close(id),
     draw(ui, content) {
       const current = backend();
       panel.tag = current.busy ? 'WORKING' : current.available ? 'READY' : 'OFFLINE'; panel.busy = current.busy;

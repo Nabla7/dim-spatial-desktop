@@ -92,7 +92,7 @@ export function openLauncher(app) {
   }
 
   const panel = app.panel({
-    id, title: 'Blueprint', glyph: 'rocket', width: 0.4, height: 0.56, onClose: () => app.dock.close(id),
+    id, title: 'Blueprint', glyph: 'rocket', width: 0.4, height: app.dock.sideHeight(), onClose: () => app.dock.close(id),
     draw(ui, content) {
       panel.tag = (PHASE[blueprint.phase] || PHASE.stopped)[0];
       if (!blueprint.reachable) { ui.empty(content, 'The dimos gateway does not answer.', 'Desktop starts it on demand; check Desktop → Settings.'); return; }

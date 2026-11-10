@@ -67,9 +67,11 @@ export class Blueprint extends EventTarget {
   }
 
   normalize(instance) {
-    const cls = instance.class || instance.id;
+    const path = instance.catalogId || instance.class || instance.id, name = (instance.class || path).split('.').pop();
     return {
-      id: instance.id, cls, name: cls.split('.').pop(), namespace: instance.namespace || null, doc: (instance.doc || '').trim(),
+      // alias: the instance's own name where the blueprint gave it one (two IMU modules, "chassis_imu" and "torso_imu").
+      id: instance.id, cls: path, name, alias: instance.id.split(':').pop() !== name.toLowerCase() ? instance.id : null,
+      namespace: instance.namespace || null, doc: (instance.doc || '').trim(),
       rpcs: (instance.rpcs || []).map(rpc => ({name: rpc.name, doc: (rpc.doc || '').trim(), params: rpc.params || [], returns: rpc.return_type || null, skill: !!rpc.skill}))
         .sort((a, b) => Number(b.skill) - Number(a.skill) || a.name.localeCompare(b.name)),
       streams: (instance.streams || []).map(stream => {

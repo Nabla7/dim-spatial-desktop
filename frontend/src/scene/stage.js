@@ -144,7 +144,7 @@ export class Stage {
     if (box.isEmpty()) return;
     const size = box.getSize(new THREE.Vector3()), span = Math.max(size.x, size.y, 0.4);
     box.getCenter(this.target.center); this.target.center.z = box.min.z;
-    if (!this.lifeSize) this.target.scale = THREE.MathUtils.clamp(this.radius * 1.5 / span, 0.002, 4);
+    if (!this.lifeSize) this.target.scale = THREE.MathUtils.clamp(this.radius * 1.7 / span, 0.002, 4);
   }
 
   toRobot(point) { return this.world.worldToLocal(point); }

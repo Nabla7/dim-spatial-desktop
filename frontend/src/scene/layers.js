@@ -96,20 +96,23 @@ export class Layers extends EventTarget {
     for (const subscription of this.tfSubscriptions) subscription.close();
     this.tfSubscriptions = tfTopics.map(topic => this.bus.subscribeDecoded(topic.key, {delivery: 'reliable'}, message => this.tf.add(message, performance.now())));
     if (!tfTopics.length) this.tf.clear();
-    if (!blueprint.running) { this.tf.clear(); this.framed = false; }
+    if (!blueprint.running) { this.tf.clear(); this.framed = false; this.firstData = 0; }
     this.emit();
   }
 
-  // Bring what is drawn onto the table: centre it and choose the scale that shows all of it.
+  // Bring what is drawn onto the table. With a robot model the view is the robot and the few metres around
+  // it (a building-sized map would shrink the robot to a dot); without one it is everything drawn.
   frameAll() {
-    const box = new THREE.Box3();
-    for (const layer of this.layers.values()) if (layer.visible && layer.bounds) { const bounds = layer.bounds(); if (bounds && !bounds.isEmpty()) box.union(bounds); }
-    if (box.isEmpty()) return false;
-    // A map many times larger than the robot would shrink the robot to a dot: cap the framed span.
-    const size = box.getSize(new THREE.Vector3()), limit = 14;
-    if (Math.max(size.x, size.y) > limit) {
-      const focus = this.robotPosition() || box.getCenter(new THREE.Vector3());
-      box.min.set(focus.x - limit / 2, focus.y - limit / 2, box.min.z); box.max.set(focus.x + limit / 2, focus.y + limit / 2, box.max.z);
+    const box = new THREE.Box3(), robot = this.robotPosition();
+    if (robot) box.setFromCenterAndSize(robot, new THREE.Vector3(5, 5, 0)).min.z = robot.z;
+    else {
+      for (const layer of this.layers.values()) if (layer.visible && layer.bounds) { const bounds = layer.bounds(); if (bounds && !bounds.isEmpty()) box.union(bounds); }
+      if (box.isEmpty()) return false;
+      const size = box.getSize(new THREE.Vector3()), limit = 14;
+      if (Math.max(size.x, size.y) > limit) {
+        const focus = box.getCenter(new THREE.Vector3());
+        box.min.set(focus.x - limit / 2, focus.y - limit / 2, box.min.z); box.max.set(focus.x + limit / 2, focus.y + limit / 2, box.max.z);
+      }
     }
     this.stage.frame(box);
     return true;
@@ -122,7 +125,11 @@ export class Layers extends EventTarget {
 
   update(dt, now) {
     for (const layer of this.layers.values()) if (layer.visible) layer.update(now, dt);
-    if (!this.framed && this.layers.size && now - (this.firstData || (this.firstData = now)) > 1800) this.framed = this.frameAll();
+    // The first framing waits a moment for data, and for the robot's pose when there is a robot to wait for.
+    if (!this.framed && this.layers.size) {
+      const waited = now - (this.firstData || (this.firstData = now)), robot = [...this.layers.values()].some(layer => layer.kind === 'robot' && layer.visible);
+      if (waited > 1500 && (!robot || this.robotPosition() || waited > 8000)) this.framed = this.frameAll();
+    }
     if (this.follow) {
       const pose = this.tf.lookup(this.follow);
       if (pose && this.tf.has(this.follow)) { const p = new THREE.Vector3().setFromMatrixPosition(pose); this.stage.target.center.x = p.x; this.stage.target.center.y = p.y; }

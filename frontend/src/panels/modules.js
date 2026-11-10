@@ -10,7 +10,7 @@ export function openModules(app) {
   if (app.dock.has(id)) { app.dock.close(id); return; }
   const state = {filter: ''};
   const panel = app.panel({
-    id, title: 'Modules', glyph: 'module', width: 0.4, height: 0.56, onClose: () => app.dock.close(id),
+    id, title: 'Modules', glyph: 'module', width: 0.4, height: app.dock.sideHeight(), onClose: () => app.dock.close(id),
     draw(ui, content) {
       const blueprint = app.blueprint;
       panel.tag = blueprint.running ? `${blueprint.modules.length} LIVE` : '';
@@ -19,7 +19,7 @@ export function openModules(app) {
       panel.busy = false;
       ui.field(content.cutTop(42, 10), state.filter, {id: 'filter', placeholder: 'Filter modules, RPCs, topics', onInput: value => { state.filter = value; }});
       const needle = state.filter.trim().toLowerCase();
-      const shown = blueprint.modules.filter(module => !needle || module.name.toLowerCase().includes(needle) || module.id.includes(needle)
+      const shown = blueprint.modules.filter(module => !needle || words(module.name).toLowerCase().includes(needle) || module.name.toLowerCase().includes(needle) || module.id.includes(needle)
         || module.rpcs.some(rpc => rpc.name.toLowerCase().includes(needle)) || module.streams.some(stream => stream.topic.toLowerCase().includes(needle)));
       ui.scroll(content, 'list', inner => {
         let y = inner.y;
@@ -30,7 +30,7 @@ export function openModules(app) {
           ui.icon('module', row.x + 26, row.cy, 30, ui.tone(alive ? 'primary' : 'danger', hot || open ? 1 : 0.7));
           ui.lamp(row.x + 26, row.cy, alive ? 'ok' : 'danger');
           ui.text(words(module.name), row.x + 54, row.y + 22, {size: SIZE.md, weight: 500, max: row.w - 170});
-          const parts = [`${module.rpcs.length} rpc`, ...(skills ? [`${skills} skill`] : []), `${module.streams.length} streams`];
+          const parts = [...(module.alias ? [module.alias] : []), `${module.rpcs.length} rpc`, ...(skills ? [`${skills} skill`] : []), `${module.streams.length} streams`];
           ui.text(parts.join(' · '), row.x + 54, row.y + 46, {size: SIZE.xs, family: 'mono', color: ui.tone('muted'), max: row.w - 170});
           if (process) {
             ui.text(`${Math.round(process.cpu_percent)}%`, row.r - 12, row.y + 22, {size: SIZE.sm, family: 'mono', align: 'right', color: ui.tone(process.cpu_percent > 90 ? 'warn' : 'fg')});

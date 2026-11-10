@@ -159,7 +159,7 @@ export function openModule(app, moduleId) {
   }
 
   const panel = app.panel({
-    id, title: words(module()?.name || moduleId), tag: moduleId, width: 0.44, height: 0.64, glyph: 'module',
+    id, title: words(module()?.name || moduleId), tag: moduleId, width: 0.44, height: app.dock.sideHeight(0.64), glyph: 'module',
     onClose: () => app.dock.close(id),
     draw(ui, content) {
       const current = module();

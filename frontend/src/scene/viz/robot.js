@@ -9,6 +9,7 @@ import {ColladaLoader} from 'three/addons/loaders/ColladaLoader.js';
 import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
 import {Layer} from '../layer.js';
 import {decodeFile} from '../../data/bus.js';
+import {gateway} from '../../data/gateway.js';
 
 const holoVertex = /* glsl */`
 #include <clipping_planes_pars_vertex>
@@ -35,7 +36,13 @@ void main() {
   #include <colorspace_fragment>
 }`;
 
-const numbers = (text, fallback) => { const values = String(text ?? '').trim().split(/\s+/).map(Number); return values.length && values.every(Number.isFinite) ? values : fallback; };
+// "1 2 3" -> [1, 2, 3]; a missing or malformed attribute gives the fallback.
+function numbers(text, fallback) {
+  const source = String(text ?? '').trim();
+  if (!source) return fallback;
+  const values = source.split(/\s+/).map(Number);
+  return values.every(Number.isFinite) ? values : fallback;
+}
 
 function originOf(element) {
   const origin = element?.querySelector(':scope > origin'), xyz = numbers(origin?.getAttribute('xyz'), [0, 0, 0]), rpy = numbers(origin?.getAttribute('rpy'), [0, 0, 0]);
@@ -94,19 +101,22 @@ function parseMesh(uri, data) {
   return Promise.reject(new Error(`no loader for .${extension}`));
 }
 
+const TRIANGLE_BUDGET = /OculusBrowser|Quest|Pico|Android/i.test(navigator.userAgent) ? 600_000 : 8_000_000;
+
 export class RobotLayer extends Layer {
   constructor(layers, {files, request}) {
     super(layers, {kind: 'robot', label: 'Robot model', topic: files, glyph: 'robot'});
-    this.requestTopic = request; this.links = new Map(); this.pending = new Map(); this.queue = []; this.meshes = new Map();
-    this.style = 'holo'; this.model = null; this.loaded = 0; this.total = 0; this.uniforms = {time: {value: 0}};
-    this.materials = [];
+    this.requestTopic = request; this.links = new Map(); this.pending = new Map(); this.queue = [];
+    this.style = 'holo'; this.model = null; this.models = new Map(); this.asked = new Set(); this.loaded = 0; this.total = 0;
+    this.uniforms = {time: {value: 0}}; this.materials = []; this.triangles = 0; this.wanted = new Set(); this.tries = new Map();
   }
 
-  material(color) {
+  // scenery: a model that is the surroundings rather than the robot is drawn fainter, and never hides the robot.
+  material(color, scenery = false) {
     const theme = this.theme, base = new THREE.Color().setRGB(color[0], color[1], color[2], THREE.SRGBColorSpace);
     const holo = this.stage.clip(new THREE.ShaderMaterial({
-      uniforms: {base: {value: base.clone().lerp(theme.three.primary, 0.55)}, rim: {value: theme.three.primary.clone()}, time: this.uniforms.time, opacity: {value: 0.9}},
-      vertexShader: holoVertex, fragmentShader: holoFragment, clipping: true, transparent: true,
+      uniforms: {base: {value: base.clone().lerp(theme.three.primary, 0.55)}, rim: {value: theme.three.primary.clone()}, time: this.uniforms.time, opacity: {value: scenery ? 0.3 : 0.9}},
+      vertexShader: holoVertex, fragmentShader: holoFragment, clipping: true, transparent: true, depthWrite: !scenery,
     }));
     const solid = this.stage.clip(new THREE.MeshStandardMaterial({color: base, roughness: 0.6, metalness: 0.15}));
     this.materials.push({holo, solid, color: base});
@@ -120,7 +130,8 @@ export class RobotLayer extends Layer {
   }
 
   start() {
-    this.listen(this.bus.subscribe(this.topic.key, {delivery: 'reliable', compress: 'zstd'}, message => {
+    // Files are background traffic: they must not squeeze the cameras and clouds while they load.
+    this.listen(this.bus.subscribe(this.topic.key, {delivery: 'reliable', compress: 'zstd', priority: 7, bandwidthPriority: 0.2}, message => {
       let file;
       try { file = decodeFile(message.bytes); } catch { return; }
       this.touch(); this.receive(file);
@@ -129,40 +140,78 @@ export class RobotLayer extends Layer {
     this.subscriptions.push(this.publisher);
     if (!this.model) this.ask('*.urdf');
     this.timer = setInterval(() => this.pump(), 400);
+    this.findModels();
+  }
+
+  // "*.urdf" is answered with one model. A UrdfManager given several (a robot and the room it stands in)
+  // is asked for each by name, and the names are in the blueprint's config as the gateway reads it.
+  async findModels() {
+    const blueprint = this.layers.app.blueprint, owner = this.topic.writers[0];
+    if (this.names || !owner) return;
+    this.names = [];
+    try {
+      const config = await gateway.blueprintConfig(blueprint.name), modules = config.modules || {};
+      const entry = modules[owner] || Object.entries(modules).find(([id]) => id.toLowerCase() === owner)?.[1];
+      const models = entry?.args?.models?.value;
+      if (models && typeof models === 'object') this.names = Object.keys(models);
+    } catch (error) { console.debug('robot model names:', error.message); }
   }
 
   stop() { super.stop(); clearInterval(this.timer); this.publisher = null; }
 
   ask(uri) {
     try { this.publisher?.put(this.bus.type('std_msgs.String').encode({data: uri})); } catch (error) { console.debug('robot model request:', error.message); }
-    this.pending.set(uri, performance.now());
+    this.pending.set(uri, performance.now()); this.lastAsk = performance.now();
   }
 
-  // Requests go out a few at a time; one that gets no answer is asked again.
+  // Requests go out a few at a time. An answer can be lost on the way (the bus drops under load), so a
+  // request that has waited while nothing at all arrived is asked again.
   pump() {
-    const now = performance.now();
-    if (!this.model) { if (now - (this.pending.get('*.urdf') || 0) > 2500) this.ask('*.urdf'); return; }
-    for (const [uri, at] of this.pending) if (now - at > 6000) { this.pending.delete(uri); this.queue.push(uri); }
-    while (this.pending.size < 4 && this.queue.length) this.ask(this.queue.shift());
-    this.detail = this.total ? (this.loaded < this.total ? `${this.loaded}/${this.total} meshes` : `${this.links.size} links`) : `${this.links.size} links`;
+    const now = performance.now(), quiet = now - (this.lastFile || 0) > 1500;
+    if (!this.model) { if (now - (this.lastAsk || 0) > 2500) this.ask('*.urdf'); return; }
+    for (const name of this.names || []) if (!this.asked.has(name)) { this.asked.add(name); this.wanted.add(`${name}.urdf`); }
+    for (const uri of this.wanted) {
+      if (now - (this.pending.get(uri) || 0) < 4000 || !quiet) continue;
+      // A name the manager does not answer to is given up on after a few tries.
+      const tries = this.tries.get(uri) || 0;
+      if (tries >= 4) { this.wanted.delete(uri); this.pending.delete(uri); continue; }
+      this.tries.set(uri, tries + 1); this.ask(uri);
+    }
+    for (const [uri, at] of this.pending) if (!this.wanted.has(uri) && now - at > 4000 && quiet) this.ask(uri);
+    let busy = [...this.pending.keys()].filter(uri => !this.wanted.has(uri)).length;
+    while (busy++ < 3 && this.queue.length) this.ask(this.queue.shift());
+    const skipped = this.skipped ? ` · ${this.skipped} too heavy` : '';
+    this.detail = (this.loaded < this.total ? `${this.loaded}/${this.total} meshes` : `${this.links.size} links`) + skipped;
   }
 
   receive(file) {
+    this.lastFile = performance.now();
     if (file.uri.endsWith('.urdf')) {
-      if (this.model) return;
-      this.pending.delete(file.uri); this.pending.delete('*.urdf');
-      try { this.build(parseUrdf(new TextDecoder().decode(file.data))); } catch (error) { this.detail = error.message; console.error('urdf:', error); }
+      this.pending.delete(file.uri); this.wanted.delete(file.uri);
+      const xml = new TextDecoder().decode(file.data);
+      // An unknown name is answered with the first model again: the same text twice is one model.
+      if ([...this.models.values()].includes(xml)) return;
+      this.models.set(file.uri, xml);
+      try { this.build(parseUrdf(xml)); } catch (error) { this.detail = error.message; console.error('urdf:', error); }
       return;
     }
     if (!this.pending.has(file.uri) && !this.queue.includes(file.uri)) return;
     this.pending.delete(file.uri); this.queue = this.queue.filter(uri => uri !== file.uri);
-    parseMesh(file.uri, file.data).then(object => this.attach(file.uri, object)).catch(error => { console.warn(`mesh ${file.uri}:`, error.message); this.loaded++; });
+    parseMesh(file.uri, file.data).then(object => {
+      // A standalone headset draws every triangle twice at 72 Hz or more: past its budget a mesh is left out.
+      let triangles = 0;
+      object.traverse(child => { if (child.isMesh) triangles += (child.geometry.index?.count ?? child.geometry.attributes.position.count) / 3; });
+      if (this.triangles + triangles > TRIANGLE_BUDGET) { this.skipped = (this.skipped || 0) + 1; this.loaded++; return; }
+      this.triangles += triangles; this.attach(file.uri, object);
+    }).catch(error => { console.warn(`mesh ${file.uri}:`, error.message); this.loaded++; });
   }
 
   build(model) {
-    this.model = model;
-    const wanted = new Set();
+    this.model ||= model;
+    const wanted = new Set(), scenery = model !== this.model && model.links.length === 1;
     for (const {link, visuals} of model.links) {
+      if (this.links.has(link)) continue;
+      if (scenery) for (const visual of visuals) visual.scenery = true;
       const group = new THREE.Group(); group.name = link; group.matrixAutoUpdate = false; group.visible = false;
       for (const visual of visuals) {
         const holder = new THREE.Group(); holder.matrixAutoUpdate = false; holder.matrix.copy(visual.origin); holder.userData.visual = visual;
@@ -172,17 +221,18 @@ export class RobotLayer extends Layer {
       }
       this.links.set(link, group); this.object.add(group);
     }
-    this.queue = [...wanted]; this.total = wanted.size; this.loaded = 0;
+    for (const uri of wanted) if (!this.queue.includes(uri)) this.queue.push(uri);
+    this.total += wanted.size;
     this.layers.emit();
   }
 
   // Give a parsed mesh this layer's materials and hang it on its visual.
   adopt(holder, object, visual) {
-    const materials = this.material(visual.color);
+    const materials = this.material(visual.color, visual.scenery);
     object.traverse(child => {
       if (!child.isMesh) return;
       if (!child.geometry.attributes.normal) child.geometry.computeVertexNormals();
-      child.userData.materials = materials; child.material = materials[this.style]; child.renderOrder = 3;
+      child.userData.materials = materials; child.material = materials[this.style]; child.renderOrder = visual.scenery ? 2 : 3;
     });
     if (visual.scale) object.scale.set(...visual.scale);
     holder.add(object);

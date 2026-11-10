@@ -13,6 +13,7 @@ uses:
     - POST active/modules/{id}/stop
     - GET catalog/blueprints
     - GET catalog/blueprints/{name}
+    - GET catalog/blueprints/{name}/config
     - GET msgs.js
   "@desktop-gateway":
     - GET topics/rates

@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import {openModule} from '../panels/module.js';
 import {hz, words} from '../util.js';
 
-const PLATE = [0.168, 0.056], PIXELS = [420, 140], SEGMENTS = 28;
+const PLATE = [0.168, 0.056], PIXELS = [420, 140], SEGMENTS = 28, scratch = new THREE.Vector3();
 
 const arcVertex = /* glsl */`
 attribute float along, rate, lit, seed;
@@ -171,7 +171,9 @@ export class Halo {
     while (ctx.measureText(name).width > w - 124 && name.length > 4) name = name.slice(0, -2).trimEnd() + '…';
     ctx.fillText(name, 108, h / 2 - 20);
     ctx.font = `400 24px ${theme.font.mono}`; ctx.fillStyle = theme.c('muted');
-    ctx.fillText(`${module.rpcs.length} rpc · ${node.rate ? hz(node.rate) : `${module.streams.length} streams`}`, 108, h / 2 + 24);
+    let detail = `${module.alias ? module.alias : `${module.rpcs.length} rpc`} · ${node.rate ? hz(node.rate) : `${module.streams.length} streams`}`;
+    while (ctx.measureText(detail).width > w - 124 && detail.length > 4) detail = detail.slice(0, -2) + '…';
+    ctx.fillText(detail, 108, h / 2 + 24);
     ctx.globalAlpha = 1;
     node.texture.needsUpdate = true;
   }
@@ -185,7 +187,9 @@ export class Halo {
     this.group.visible = this.enabled && !this.stage.lifeSize;
     const camera = this.app.camera, facing = new THREE.Quaternion(), parent = new THREE.Quaternion();
     camera.getWorldQuaternion(facing); this.group.getWorldQuaternion(parent); facing.premultiply(parent.invert());
-    const age = now - this.built;
+    const age = now - this.built, eye = camera.getWorldPosition(new THREE.Vector3());
+    let nearest = Infinity;
+    for (const node of this.nodes.values()) nearest = Math.min(nearest, node.mesh.getWorldPosition(scratch).distanceTo(eye));
     for (const node of this.nodes.values()) {
       // Plates arrive one after another when a blueprint comes up.
       const target = age > node.index * 55 ? 1 : 0;
@@ -193,7 +197,9 @@ export class Halo {
       node.hover += ((this.hovered === node.id ? 1 : 0) - node.hover) * Math.min(1, dt * 14);
       node.flash = Math.max(0, node.flash - dt * 1.8);
       node.mesh.quaternion.copy(facing);
-      node.mesh.scale.setScalar(Math.max(0.001, node.grow) * (1 + node.hover * 0.16 + node.flash * 0.25));
+      // Plates across the ring from the viewer are drawn larger, so every name stays readable.
+      const distance = node.mesh.getWorldPosition(scratch).distanceTo(eye), far = THREE.MathUtils.clamp(distance / nearest, 1, 1.9);
+      node.mesh.scale.setScalar(Math.max(0.001, node.grow) * far * (1 + node.hover * 0.16 + node.flash * 0.25));
       node.mesh.material.opacity = Math.min(1, node.grow * 1.2);
     }
   }

@@ -50,6 +50,15 @@ export class Dock extends EventTarget {
     this.layout(true);
   }
 
+  // How tall a side panel may be where panels are now: the HUD column on a screen, a comfortable reach in a room.
+  sideHeight(preferred = 0.62) {
+    if (this.mode !== 'hud') return preferred;
+    const {height} = this.hudExtent(), perPixel = height / Math.max(1, innerHeight);
+    let free = height - 2 * MARGIN - (this.inset.top + this.inset.bottom) * perPixel;
+    for (const entry of this.entries.values()) if (entry.slot === 'bar' || entry.slot === 'head') free -= entry.panel.height + GAP;
+    return Math.max(0.4, Math.min(0.8, free));
+  }
+
   // The HUD rectangle at its distance from the camera, in metres.
   hudExtent() {
     const height = 2 * Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2)) * HUD_DISTANCE;

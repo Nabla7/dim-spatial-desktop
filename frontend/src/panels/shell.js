@@ -18,8 +18,8 @@ export function openShell(app) {
     id: 'head', bare: true, width: 0.74, height: 0.05,
     draw(ui, content) {
       const toast = app.toasts[0];
-      ui.text('DIMOS', content.x + 6, content.cy + 1, {size: SIZE.sm, family: 'display', color: ui.tone('primary'), track: 4});
-      ui.text('SPATIAL', content.x + 104, content.cy + 1, {size: SIZE.xs, family: 'display', color: ui.tone('muted'), track: 3});
+      const brand = ui.text('DIMOS', content.x + 6, content.cy + 1, {size: SIZE.sm, family: 'display', color: ui.tone('primary'), track: 4});
+      ui.text('SPATIAL', content.x + 22 + brand, content.cy + 1, {size: SIZE.xs, family: 'display', color: ui.tone('muted'), track: 3});
       if (toast) {
         ui.text(toast.message, content.cx + 20, content.cy + 1, {size: SIZE.sm, weight: 500, color: ui.tone(toast.tone === 'info' ? 'fg' : toast.tone), align: 'center', max: content.w - 520});
       } else if (blueprint.name) {

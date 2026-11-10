@@ -65,11 +65,19 @@ export class App extends EventTarget {
     this.toasts = []; this.selected = null; this.last = performance.now();
 
     openShell(this);
-    openLauncher(this);
-    openModules(this);
     this.blueprint.start();
-    // The first run to appear frames itself: open on what is there rather than on an empty table.
-    this.blueprint.addEventListener('change', () => { if (this.blueprint.phase === 'failed' && this.blueprint.launch?.error) this.toast(`Launch failed: ${this.blueprint.launch.error}`, 'danger'); });
+    // The left side shows what matters now: the catalog while nothing runs, the modules once something does.
+    let wasRunning = null;
+    this.blueprint.addEventListener('change', () => {
+      const running = this.blueprint.phase === 'running' || this.blueprint.phase === 'starting';
+      if (running === wasRunning) return;
+      if (wasRunning === null || !this.dock.entries.get(running ? 'launcher' : 'modules')?.free) {
+        if (running && !this.dock.has('modules')) openModules(this);
+        if (!running && !this.dock.has('launcher')) openLauncher(this);
+      }
+      if (wasRunning !== null) this.toast(running ? `${this.blueprint.name} is starting` : `${this.blueprint.name || 'Blueprint'} stopped`, running ? 'ok' : 'warn');
+      wasRunning = running;
+    });
     this.text.addEventListener('focus', () => { if (this.xr.presenting && !this.xr.session?.isSystemKeyboardSupported) openKeyboard(this, true); });
     this.text.addEventListener('blur', () => { if (this.dock.has('keyboard')) this.dock.close('keyboard'); });
 

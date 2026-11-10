@@ -11,7 +11,7 @@ export function openLayers(app) {
   if (app.dock.has(id)) { app.dock.close(id); return; }
   const layers = app.layers;
   const panel = app.panel({
-    id, title: 'Layers', glyph: 'layers', width: 0.4, height: 0.56, onClose: () => app.dock.close(id),
+    id, title: 'Layers', glyph: 'layers', width: 0.4, height: app.dock.sideHeight(), onClose: () => app.dock.close(id),
     draw(ui, content) {
       const all = layers.list();
       panel.tag = all.length ? `${all.filter(layer => layer.visible).length}/${all.length} ON` : '';

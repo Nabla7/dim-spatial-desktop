@@ -42,6 +42,8 @@ export const gateway = {
   // -- what could run -------------------------------------------------------------------------------
   blueprints: () => request('../../gateways/dimos/catalog/blueprints', {timeout: 30000}),
   blueprint: name => request(`../../gateways/dimos/catalog/blueprints/${segment(name)}`, {timeout: 60000}),
+  // The blueprint's config as launched: each module's fields with the values this blueprint gave them.
+  blueprintConfig: name => request(`../../gateways/dimos/catalog/blueprints/${segment(name)}/config`, {timeout: 90000}),
 
   // -- the Launcher: it adds the user's saved config to a launch, the gateway keeps none -------------
   launch: (blueprint, config) => request('../@launcher/launch', {method: 'POST', body: config ? {blueprint, config} : {blueprint}, timeout: 30000}),

@@ -13,8 +13,8 @@ void main() {
   float lon = atan(d.z, d.x) * 12.0 / 3.14159265, lat = asin(clamp(d.y, -1.0, 1.0)) * 16.0 / 3.14159265;
   float lines = max(1.0 - min(abs(fract(lon - 0.5) - 0.5) / fwidth(lon), 1.0), 1.0 - min(abs(fract(lat - 0.5) - 0.5) / fwidth(lat), 1.0));
   float breathe = 0.85 + 0.15 * sin(time * 0.35 + d.x * 3.0);
-  vec3 color = base + glow * (horizon * 0.10 + lines * horizon * 0.10 * breathe);
-  color += glow * 0.04 * smoothstep(0.2, -0.9, d.y);
+  vec3 color = base + glow * (horizon * 0.012 + lines * horizon * 0.030 * breathe);
+  color += glow * 0.006 * smoothstep(0.2, -0.9, d.y);
   gl_FragColor = vec4(color, 1.0);
   #include <colorspace_fragment>
 }`;
