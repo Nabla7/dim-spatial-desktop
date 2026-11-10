@@ -22,6 +22,7 @@ export class Layers extends EventTarget {
     this.layers = new Map(); this.tfSubscriptions = []; this.framed = false; this.follow = null; this.autoFollow = true;
     // Taking hold of the world (a drag, a pinch, a stick) ends following: the user is placing the view now.
     this.stage.onManualMove = () => { if (this.follow) { this.follow = null; this.autoFollow = false; this.emit(); } };
+    this.stage.following = () => !!this.follow;
     this.root = new THREE.Group(); this.root.name = 'layers'; this.stage.world.add(this.root);
     this.choices = this.loadChoices();
     app.blueprint.addEventListener('modules', () => this.sync());

@@ -230,7 +230,9 @@ export class Pointers {
       if (hit?.type === 'panel') { hit.panel.scroll(hit.x, hit.y, event.deltaY * (event.deltaMode ? 30 : 1)); event.preventDefault(); event.stopImmediatePropagation(); return; }
       // A trackpad pinch (or ctrl + wheel) rescales the world about the point under the cursor.
       if (event.ctrlKey || event.metaKey) {
-        this.stage.scaleAbout(Math.exp(-event.deltaY * 0.012), this.grabPoint(pointer));
+        // A pinch arrives as many small deltas, a wheel notch as one large one: bound what one event may do.
+        // While the robot is followed it stays the centre of the zoom; otherwise the point under the cursor does.
+        this.stage.scaleAbout(Math.exp(THREE.MathUtils.clamp(-event.deltaY * 0.01, -0.22, 0.22)), this.stage.following?.() ? null : this.grabPoint(pointer));
         this.stage.view.scale = this.stage.target.scale;
         event.preventDefault(); event.stopImmediatePropagation();
       }

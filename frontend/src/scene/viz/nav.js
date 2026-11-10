@@ -104,7 +104,7 @@ export class GridLayer extends Layer {
       this.origin.position.set(at.x, at.y, at.z + 0.005);
       if (q && (q.x || q.y || q.z || q.w)) this.origin.quaternion.set(q.x, q.y, q.z, q.w).normalize();
       this.box.setFromCenterAndSize(new THREE.Vector3(at.x + width * resolution / 2, at.y + height * resolution / 2, at.z), new THREE.Vector3(width * resolution, height * resolution, 0.2));
-      this.frameId = message.header?.frame_id || this.frameId; this.detail = `${width}×${height} @ ${resolution} m`; this.touch();
+      this.frameId = message.header?.frame_id || this.frameId; this.detail = `${width}×${height} @ ${+resolution.toFixed(3)} m`; this.touch();
     }));
   }
 
