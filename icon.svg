@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="5.5 5.5 53 53" width="64" height="64" role="img" aria-label="Spatial Desktop">
+  <!-- dimOS app icon set v6: dark glass tile tinted to the glyph, neon gradient glyph with a soft bloom -->
+  <defs>
+    <radialGradient id="tile" cx=".5" cy=".18" r=".95"><stop offset="0" stop-color="#0c2a3a"/><stop offset="1" stop-color="#07070f"/></radialGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".13"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".45"/><stop offset=".25" stop-color="#fff" stop-opacity=".1"/><stop offset="1" stop-color="#fff" stop-opacity=".06"/></linearGradient>
+    <filter id="bloom" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="2.4"/></filter>
+    <linearGradient id="a" gradientUnits="userSpaceOnUse" x1="0" y1="14" x2="0" y2="50"><stop offset="0" stop-color="#a6f0ff"/><stop offset="1" stop-color="#2d8cff"/></linearGradient>
+    <g id="glyph">
+      <path d="M32 40L48 44.5L32 49L16 44.5Z" fill="none" stroke="url(#a)" stroke-width="2.2" stroke-linejoin="round"/>
+      <path d="M16 44.5V47.5L32 52L48 47.5V44.5" fill="none" stroke="url(#a)" stroke-width="1.4" stroke-linejoin="round" stroke-opacity=".6"/>
+      <path d="M22 41L26 22M42 41L38 22" fill="none" stroke="url(#a)" stroke-width="1.1" stroke-linecap="round" stroke-opacity=".5" stroke-dasharray="1.2 3"/>
+      <path d="M32 13L39 17V25L32 29L25 25V17Z" fill="none" stroke="url(#a)" stroke-width="2.3" stroke-linejoin="round"/>
+      <path d="M25 17L32 21L39 17M32 21V29" fill="none" stroke="url(#a)" stroke-width="1.4" stroke-linejoin="round" stroke-opacity=".7"/>
+      <ellipse cx="32" cy="34.5" rx="12" ry="3.2" fill="none" stroke="url(#a)" stroke-width="1.5" stroke-dasharray="2.2 3.2" stroke-linecap="round"/></g>
+    <linearGradient id="scanrow" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff"/><stop offset=".25" stop-color="#e2e2e2"/><stop offset=".5" stop-color="#c2c2c2"/><stop offset=".75" stop-color="#e2e2e2"/><stop offset="1" stop-color="#fff"/></linearGradient>
+    <pattern id="scan" width="64" height="3.6" patternUnits="userSpaceOnUse"><rect width="64" height="3.6" fill="url(#scanrow)"/></pattern>
+    <mask id="scanlines" maskUnits="userSpaceOnUse" x="-16" y="-16" width="96" height="96"><rect x="-16" y="-16" width="96" height="96" fill="url(#scan)"/></mask>
+    <filter id="core" x="-20%" y="-20%" width="140%" height="140%"><feMorphology in="SourceAlpha" operator="erode" radius="0.9" result="e"/><feGaussianBlur in="e" stdDeviation="0.45" result="eb"/><feFlood flood-color="#fffaf0" flood-opacity=".78"/><feComposite in2="eb" operator="in" result="c"/><feMerge><feMergeNode in="SourceGraphic"/><feMergeNode in="c"/></feMerge></filter>
+  </defs>
+  <g transform="translate(32 32) scale(1.12) translate(-32 -32)">
+    <use href="#glyph" filter="url(#bloom)"/>
+    <g mask="url(#scanlines)"><use href="#glyph" filter="url(#core)"/></g>
+  </g>
+</svg>

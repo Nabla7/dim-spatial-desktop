@@ -1,0 +1,25 @@
+title: Spatial Desktop
+version: "0.1.0"
+spec-version: v1.6
+uses:
+  "@dimos-gateway":
+    - GET active
+    - GET active/modules
+    - GET active/stats
+    - GET active/log
+    - POST active/stop
+    - POST active/modules/{id}/rpcs/{name}
+    - POST active/modules/{id}/restart
+    - POST active/modules/{id}/stop
+    - GET catalog/blueprints
+    - GET catalog/blueprints/{name}
+    - GET msgs.js
+  "@desktop-gateway":
+    - GET topics/rates
+    - GET management/gateways/agent
+    - POST ui/notifications
+    - PUT views/{app}
+  "@launcher":
+    - POST launch
+    - POST relaunch
+  "@zenoh-gateway": ">=0.5 <0.6"

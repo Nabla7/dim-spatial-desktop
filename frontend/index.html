@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+    <title>Spatial Desktop</title>
+    <link rel="stylesheet" href="../../theme.css">
+    <style>
+      html, body { height: 100%; }
+      body { margin: 0; overflow: hidden; background: var(--scene-bg, var(--bg)); color: var(--fg); font: 14px var(--sans); }
+      canvas { display: block; touch-action: none; outline: none; }
+      #boot {
+        position: fixed; inset: 0; display: grid; place-content: center; justify-items: center; gap: 14px;
+        background: var(--bg); transition: opacity 0.8s ease; z-index: 2;
+      }
+      #boot.done { opacity: 0; pointer-events: none; }
+      #boot h1 {
+        margin: 0; font: var(--heading-weight, 400) 15px var(--display); letter-spacing: 0.5em; text-indent: 0.5em;
+        text-transform: var(--label-case); color: var(--primary);
+      }
+      #boot-note { font: 12px var(--mono); color: var(--muted-fg); max-width: 70ch; text-align: center; padding: 0 24px; }
+      #boot.failed #boot-note { color: var(--danger); }
+      #boot i { width: 180px; height: 1px; background: linear-gradient(90deg, transparent, var(--primary), transparent); animation: sweep 1.6s ease-in-out infinite; }
+      #boot.failed i { animation: none; opacity: 0.3; }
+      @keyframes sweep { 0%, 100% { transform: scaleX(0.2); opacity: 0.3; } 50% { transform: scaleX(1); opacity: 1; } }
+    </style>
+    <script type="importmap">
+      {"imports": {"three": "./vendor/three/three.module.min.js", "three/addons/": "./vendor/three/addons/"}}
+    </script>
+  </head>
+  <body>
+    <div id="boot"><h1>Spatial Desktop</h1><i></i><div id="boot-note">Projecting…</div></div>
+    <script type="module" src="src/main.js"></script>
+  </body>
+</html>
