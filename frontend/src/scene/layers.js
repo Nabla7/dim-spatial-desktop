@@ -19,7 +19,9 @@ export class Layers extends EventTarget {
     super();
     this.app = app; this.bus = app.bus; this.stage = app.stage; this.theme = app.theme;
     this.tf = new TfTree(); this.feeds = new Feeds(app.bus);
-    this.layers = new Map(); this.tfSubscriptions = []; this.framed = false; this.follow = null;
+    this.layers = new Map(); this.tfSubscriptions = []; this.framed = false; this.follow = null; this.autoFollow = true;
+    // Taking hold of the world (a drag, a pinch, a stick) ends following: the user is placing the view now.
+    this.stage.onManualMove = () => { if (this.follow) { this.follow = null; this.autoFollow = false; this.emit(); } };
     this.root = new THREE.Group(); this.root.name = 'layers'; this.stage.world.add(this.root);
     this.choices = this.loadChoices();
     app.blueprint.addEventListener('modules', () => this.sync());
@@ -55,25 +57,29 @@ export class Layers extends EventTarget {
       return null;
     };
     const robotModel = topics.some(topic => topic.type === 'files.File');
-    const depthUsed = new Set(), colorUsed = new Set();
+    const paired = new Set();
+    // The first of the names that is another topic of the wanted kind.
+    const named = (own, names, test) => { for (const name of names) { const topic = name !== own.topic && byTopic(name); if (topic && test(topic)) return topic; } return null; };
+    const isColor = topic => IMAGE_TYPES.includes(topic.type) && !isDepth(topic), isInfo = topic => topic.type === 'sensor_msgs.CameraInfo';
     for (const topic of topics) {
       if (!IMAGE_TYPES.includes(topic.type) || !isDepth(topic)) continue;
-      // A depth image, the colour image beside it and the intrinsics for both: one textured surface.
-      const stem = topic.topic.replace(/_?depth_?/i, '_').replace(/_image|_$/g, '').replace(/__+/g, '_');
-      const color = byTopic(topic.topic.replace(/_depth/i, '')) || byTopic(topic.topic.replace(/depth/i, 'color')) || byTopic(topic.topic.replace(/depth/i, 'rgb'))
-        || inModule(topic, other => IMAGE_TYPES.includes(other.type) && !isDepth(other) && other.topic.startsWith(stem || '/'));
-      const info = byTopic(topic.topic.replace(/_depth.*/i, '_info')) || byTopic(topic.topic.replace(/depth_image.*/i, 'camera_info')) || byTopic(topic.topic.replace(/depth.*/i, 'camera_info'))
-        || inModule(topic, other => other.type === 'sensor_msgs.CameraInfo' && other.topic.startsWith(stem || '/'))
-        || inModule(topic, other => other.type === 'sensor_msgs.CameraInfo');
+      // A depth image, the colour image beside it and the intrinsics for both make one textured surface.
+      // Found by name (/left_wrist_depth + /left_wrist + /left_wrist_info; /depth_image + /color_image +
+      // /camera_info; /camera/depth/image_raw + /camera/color/image_raw), else by being the same module's.
+      const name = topic.topic, parent = name.replace(/[^/]*$/, '');
+      const color = named(topic, [name.replace(/_depth/i, ''), name.replace(/depth/i, 'color'), name.replace(/depth/i, 'rgb'), name.replace(/depth_?/i, '')], isColor)
+        || inModule(topic, other => isColor(other) && !paired.has(other.key));
+      const info = named(topic, [name.replace(/_depth.*/i, '_info'), name.replace(/depth_image.*/i, 'camera_info'), `${parent}camera_info`, name.replace(/depth/i, 'color').replace(/[^/]*$/, 'camera_info')], isInfo)
+        || inModule(topic, isInfo);
       if (!info) continue;
-      depthUsed.add(topic.key); if (color) colorUsed.add(color.key);
+      paired.add(topic.key); if (color) paired.add(color.key);
       add(`rgbd:${topic.key}`, () => new RgbdLayer(this, {depth: topic, color, info}), true);
     }
     for (const topic of topics) {
       if (topic.type === 'sensor_msgs.PointCloud2') add(topic.key, () => new CloudLayer(this, topic), !/raw/i.test(topic.topic));
-      else if (IMAGE_TYPES.includes(topic.type) && !depthUsed.has(topic.key)) {
-        const info = !isDepth(topic) && (byTopic(topic.topic.replace(/(_image)?$/, '_info')) || byTopic(topic.topic.replace(/[^/]*$/, 'camera_info')) || inModule(topic, other => other.type === 'sensor_msgs.CameraInfo'));
-        add(topic.key, () => new CameraLayer(this, {color: topic, info: info || null, paired: colorUsed.has(topic.key)}), false);
+      else if (IMAGE_TYPES.includes(topic.type) && !paired.has(topic.key)) {
+        const name = topic.topic, info = named(topic, [name.replace(/(_image)?$/, '_info'), name.replace(/[^/]*$/, 'camera_info')], isInfo) || inModule(topic, isInfo);
+        add(topic.key, () => new CameraLayer(this, {color: topic, info}), false);
       }
       else if (POSE_TYPES.includes(topic.type)) add(topic.key, () => new PoseLayer(this, topic), true);
       else if (topic.type === 'nav_msgs.Path') add(topic.key, () => new PathLayer(this, topic), true);
@@ -96,7 +102,7 @@ export class Layers extends EventTarget {
     for (const subscription of this.tfSubscriptions) subscription.close();
     this.tfSubscriptions = tfTopics.map(topic => this.bus.subscribeDecoded(topic.key, {delivery: 'reliable'}, message => this.tf.add(message, performance.now())));
     if (!tfTopics.length) this.tf.clear();
-    if (!blueprint.running) { this.tf.clear(); this.framed = false; this.firstData = 0; }
+    if (!blueprint.running) { this.tf.clear(); this.framed = false; this.firstData = 0; this.follow = null; this.autoFollow = true; }
     this.emit();
   }
 
@@ -118,6 +124,13 @@ export class Layers extends EventTarget {
     return true;
   }
 
+  robotRoot() {
+    for (const layer of this.layers.values()) if (layer.kind === 'robot' && layer.visible && layer.model) return layer.model.links[0]?.link || null;
+    return null;
+  }
+
+  setFollow(on) { this.autoFollow = false; this.follow = on ? this.robotRoot() : null; this.emit(); }
+
   robotPosition() {
     for (const layer of this.layers.values()) if (layer.kind === 'robot' && layer.visible) { const position = layer.position?.(); if (position) return position; }
     return null;
@@ -130,9 +143,21 @@ export class Layers extends EventTarget {
       const waited = now - (this.firstData || (this.firstData = now)), robot = [...this.layers.values()].some(layer => layer.kind === 'robot' && layer.visible);
       if (waited > 1500 && (!robot || this.robotPosition() || waited > 8000)) this.framed = this.frameAll();
     }
+    // Watchdog, every two seconds: a shown layer whose topic is publishing but which has heard nothing lately.
+    if (now - (this.checkedAt || 0) > 2000) {
+      this.checkedAt = now;
+      for (const layer of this.layers.values()) {
+        const rate = layer.topic ? this.app.blueprint.topics.get(layer.topic.key)?.hz || 0 : 0;
+        if (!layer.visible || layer.kind === 'robot' || rate < 0.5) continue;
+        const silence = now - Math.max(layer.lastAt, layer.restartedAt || 0, layer.shownAt || 0);
+        if (silence > 8000 + 4000 / rate) { console.warn(`layer ${layer.label}: no data for ${Math.round(silence / 1000)} s while the topic runs at ${rate.toFixed(1)} Hz; subscribing again`); layer.restart(); }
+      }
+    }
+    // A robot that drives is kept at the middle of the table until the user takes hold of the world.
+    if (this.autoFollow && !this.follow) { const root = this.robotRoot(); if (root && this.tf.knows(root)) { this.follow = root; this.emit(); } }
     if (this.follow) {
-      const pose = this.tf.lookup(this.follow);
-      if (pose && this.tf.has(this.follow)) { const p = new THREE.Vector3().setFromMatrixPosition(pose); this.stage.target.center.x = p.x; this.stage.target.center.y = p.y; }
+      const pose = this.tf.knows(this.follow) ? this.tf.lookup(this.follow) : null;
+      if (pose) { const p = new THREE.Vector3().setFromMatrixPosition(pose); this.stage.target.center.x = p.x; this.stage.target.center.y = p.y; }
     }
   }
 }

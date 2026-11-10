@@ -91,7 +91,7 @@ class CameraBase extends Layer {
 
 export class RgbdLayer extends CameraBase {
   constructor(layers, {depth, color, info}) {
-    super(layers, {kind: 'rgbd', label: depth.topic.replace(/_?depth(_image)?/i, '') || depth.topic, topic: depth, glyph: 'camera'}, {color, info});
+    super(layers, {kind: 'rgbd', label: color ? `${color.topic} + depth` : depth.topic, topic: depth, glyph: 'camera'}, {color, info});
     this.depthTopic = depth; this.depthTexture = null; this.grid = null; this.dims = [0, 0];
     this.uniforms = {
       depthMap: {value: null}, colorMap: {value: null}, intrinsics: {value: new THREE.Vector4(1, 1, 0, 0)}, sourceSize: {value: new THREE.Vector2(1, 1)},
@@ -152,9 +152,8 @@ export class RgbdLayer extends CameraBase {
 }
 
 export class CameraLayer extends CameraBase {
-  constructor(layers, {color, info, paired}) {
+  constructor(layers, {color, info}) {
     super(layers, {kind: 'camera', label: color.topic, topic: color, glyph: 'camera'}, {color, info});
-    this.paired = paired;
     this.screen = new THREE.Mesh(new THREE.BufferGeometry(), this.stage.clip(new THREE.MeshBasicMaterial({side: THREE.DoubleSide, transparent: true, opacity: 0.92})));
     this.screen.geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(12), 3));
     this.screen.geometry.setAttribute('uv', new THREE.BufferAttribute(new Float32Array([0, 1, 1, 1, 1, 0, 0, 0]), 2));

@@ -101,6 +101,34 @@ function parseMesh(uri, data) {
   return Promise.reject(new Error(`no loader for .${extension}`));
 }
 
+// Mesh files, kept in the browser between visits: a robot's meshes are megabytes and a room's far more,
+// and they change only when their path does (dimos keeps assets under content-hashed folders).
+const meshCache = {
+  open() {
+    return this.db ||= new Promise(resolve => {
+      const request = indexedDB.open('spatial-desktop-meshes', 1);
+      request.onupgradeneeded = () => request.result.createObjectStore('files');
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => resolve(null);
+    });
+  },
+  async get(uri) {
+    const db = await this.open();
+    if (!db) return null;
+    return new Promise(resolve => {
+      const request = db.transaction('files').objectStore('files').get(uri);
+      request.onsuccess = () => resolve(request.result ? new Uint8Array(request.result) : null);
+      request.onerror = () => resolve(null);
+    });
+  },
+  async put(uri, bytes) {
+    const db = await this.open();
+    if (!db) return;
+    try { db.transaction('files', 'readwrite').objectStore('files').put(bytes.slice().buffer, uri); } catch { /* over quota: the mesh is fetched again next time */ }
+  },
+  async clear() { const db = await this.open(); db?.transaction('files', 'readwrite').objectStore('files').clear(); },
+};
+
 const TRIANGLE_BUDGET = /OculusBrowser|Quest|Pico|Android/i.test(navigator.userAgent) ? 600_000 : 8_000_000;
 
 export class RobotLayer extends Layer {
@@ -108,7 +136,7 @@ export class RobotLayer extends Layer {
     super(layers, {kind: 'robot', label: 'Robot model', topic: files, glyph: 'robot'});
     this.requestTopic = request; this.links = new Map(); this.pending = new Map(); this.queue = [];
     this.style = 'holo'; this.model = null; this.models = new Map(); this.asked = new Set(); this.loaded = 0; this.total = 0;
-    this.uniforms = {time: {value: 0}}; this.materials = []; this.triangles = 0; this.wanted = new Set(); this.tries = new Map();
+    this.uniforms = {time: {value: 0}}; this.materials = []; this.triangles = 0; this.wanted = new Set(); this.tries = new Map(); this.sizes = new Set();
   }
 
   // scenery: a model that is the surroundings rather than the robot is drawn fainter, and never hides the robot.
@@ -130,17 +158,75 @@ export class RobotLayer extends Layer {
   }
 
   start() {
-    // Files are background traffic: they must not squeeze the cameras and clouds while they load.
-    this.listen(this.bus.subscribe(this.topic.key, {delivery: 'reliable', compress: 'zstd', priority: 7, bandwidthPriority: 0.2}, message => {
-      let file;
-      try { file = decodeFile(message.bytes); } catch { return; }
-      this.touch(); this.receive(file);
-    }));
     this.publisher = this.bus.publisher(this.requestTopic.key, {delivery: 'reliable'});
     this.subscriptions.push(this.publisher);
-    if (!this.model) this.ask('*.urdf');
     this.timer = setInterval(() => this.pump(), 400);
     this.findModels();
+  }
+
+  stop() { super.stop(); clearInterval(this.timer); this.publisher = null; this.files = null; }
+
+  // Every answer on /file_info goes to everyone listening, whoever asked. So this layer listens only
+  // while it is owed something: another page loading ten thousand collision meshes then costs this one nothing.
+  listenForFiles(on) {
+    if (on === !!this.files) return;
+    if (!on) { this.files.close?.(); this.subscriptions = this.subscriptions.filter(subscription => subscription !== this.files); this.files = null; return; }
+    // Files are background traffic: they must not squeeze the cameras and clouds while they load.
+    this.files = this.listen(this.bus.subscribe(this.topic.key, {delivery: 'reliable', compress: 'zstd', priority: 7, bandwidthPriority: 0.2}, message => {
+      let file;
+      try { file = decodeFile(message.bytes); } catch { return; }
+      this.receive(file);
+    }));
+  }
+
+  ask(uri) {
+    try { this.publisher?.put(this.bus.type('std_msgs.String').encode({data: uri})); } catch (error) { console.debug('robot model request:', error.message); }
+    this.pending.set(uri, performance.now()); this.lastAsk = performance.now();
+  }
+
+  // Requests go out a few at a time. An answer can be lost on the way (the bus drops under load), so a
+  // request that has waited while nothing of this layer's arrived is asked again.
+  pump() {
+    const now = performance.now(), quiet = now - (this.lastFile || 0) > 1500;
+    const owed = !this.model || this.pending.size > 0 || this.queue.length > 0 || this.wanted.size > 0 || !this.names;
+    if (owed) this.idleSince = now;
+    this.listenForFiles(owed || now - (this.idleSince || 0) < 3000);
+    if (!this.files) { this.touch(); return; }
+    if (!this.model) { if (now - (this.lastAsk || 0) > 2500) this.ask('*.urdf'); return; }
+    for (const name of this.names || []) if (!this.asked.has(name)) { this.asked.add(name); this.wanted.add(`${name}.urdf`); }
+    for (const uri of this.wanted) {
+      if (now - (this.pending.get(uri) || 0) < 4000 || !quiet) continue;
+      // A name the manager does not answer to is given up on after a few tries.
+      const tries = this.tries.get(uri) || 0;
+      if (tries >= 4) { this.wanted.delete(uri); this.pending.delete(uri); continue; }
+      this.tries.set(uri, tries + 1); this.ask(uri);
+    }
+    for (const [uri, at] of this.pending) if (!this.wanted.has(uri) && now - at > 4000 && quiet) this.ask(uri);
+    let busy = [...this.pending.keys()].filter(uri => !this.wanted.has(uri)).length;
+    while (busy++ < 3 && this.queue.length) this.ask(this.queue.shift());
+    const skipped = this.skipped ? ` · ${this.skipped} too heavy` : '';
+    this.detail = (this.loaded < this.total ? `${this.loaded}/${this.total} meshes` : `${this.links.size} links`) + skipped;
+    this.touch();
+  }
+
+  receive(file) {
+    if (file.uri.endsWith('.urdf')) {
+      this.pending.delete(file.uri); this.wanted.delete(file.uri);
+      // Other pages ask for URDFs too and every answer is broadcast: one already held is recognised by its size.
+      if (this.sizes.has(file.data.byteLength)) return;
+      this.lastFile = performance.now();
+      this.sizes.add(file.data.byteLength);
+      const xml = new TextDecoder().decode(file.data);
+      if ([...this.models.values()].includes(xml)) return;
+      this.models.set(file.uri, xml);
+      try { this.build(parseUrdf(xml)); } catch (error) { this.detail = error.message; console.error('urdf:', error); }
+      return;
+    }
+    if (!this.pending.has(file.uri) && !this.queue.includes(file.uri)) return;
+    this.lastFile = performance.now();
+    this.pending.delete(file.uri); this.queue = this.queue.filter(uri => uri !== file.uri);
+    meshCache.put(file.uri, file.data);
+    this.accept(file.uri, file.data);
   }
 
   // "*.urdf" is answered with one model. A UrdfManager given several (a robot and the room it stands in)
@@ -157,53 +243,14 @@ export class RobotLayer extends Layer {
     } catch (error) { console.debug('robot model names:', error.message); }
   }
 
-  stop() { super.stop(); clearInterval(this.timer); this.publisher = null; }
-
-  ask(uri) {
-    try { this.publisher?.put(this.bus.type('std_msgs.String').encode({data: uri})); } catch (error) { console.debug('robot model request:', error.message); }
-    this.pending.set(uri, performance.now()); this.lastAsk = performance.now();
-  }
-
-  // Requests go out a few at a time. An answer can be lost on the way (the bus drops under load), so a
-  // request that has waited while nothing at all arrived is asked again.
-  pump() {
-    const now = performance.now(), quiet = now - (this.lastFile || 0) > 1500;
-    if (!this.model) { if (now - (this.lastAsk || 0) > 2500) this.ask('*.urdf'); return; }
-    for (const name of this.names || []) if (!this.asked.has(name)) { this.asked.add(name); this.wanted.add(`${name}.urdf`); }
-    for (const uri of this.wanted) {
-      if (now - (this.pending.get(uri) || 0) < 4000 || !quiet) continue;
-      // A name the manager does not answer to is given up on after a few tries.
-      const tries = this.tries.get(uri) || 0;
-      if (tries >= 4) { this.wanted.delete(uri); this.pending.delete(uri); continue; }
-      this.tries.set(uri, tries + 1); this.ask(uri);
-    }
-    for (const [uri, at] of this.pending) if (!this.wanted.has(uri) && now - at > 4000 && quiet) this.ask(uri);
-    let busy = [...this.pending.keys()].filter(uri => !this.wanted.has(uri)).length;
-    while (busy++ < 3 && this.queue.length) this.ask(this.queue.shift());
-    const skipped = this.skipped ? ` · ${this.skipped} too heavy` : '';
-    this.detail = (this.loaded < this.total ? `${this.loaded}/${this.total} meshes` : `${this.links.size} links`) + skipped;
-  }
-
-  receive(file) {
-    this.lastFile = performance.now();
-    if (file.uri.endsWith('.urdf')) {
-      this.pending.delete(file.uri); this.wanted.delete(file.uri);
-      const xml = new TextDecoder().decode(file.data);
-      // An unknown name is answered with the first model again: the same text twice is one model.
-      if ([...this.models.values()].includes(xml)) return;
-      this.models.set(file.uri, xml);
-      try { this.build(parseUrdf(xml)); } catch (error) { this.detail = error.message; console.error('urdf:', error); }
-      return;
-    }
-    if (!this.pending.has(file.uri) && !this.queue.includes(file.uri)) return;
-    this.pending.delete(file.uri); this.queue = this.queue.filter(uri => uri !== file.uri);
-    parseMesh(file.uri, file.data).then(object => {
+  accept(uri, data) {
+    parseMesh(uri, data).then(object => {
       // A standalone headset draws every triangle twice at 72 Hz or more: past its budget a mesh is left out.
       let triangles = 0;
       object.traverse(child => { if (child.isMesh) triangles += (child.geometry.index?.count ?? child.geometry.attributes.position.count) / 3; });
       if (this.triangles + triangles > TRIANGLE_BUDGET) { this.skipped = (this.skipped || 0) + 1; this.loaded++; return; }
-      this.triangles += triangles; this.attach(file.uri, object);
-    }).catch(error => { console.warn(`mesh ${file.uri}:`, error.message); this.loaded++; });
+      this.triangles += triangles; this.attach(uri, object);
+    }).catch(error => { console.warn(`mesh ${uri}:`, error.message); this.loaded++; });
   }
 
   build(model) {
@@ -221,8 +268,11 @@ export class RobotLayer extends Layer {
       }
       this.links.set(link, group); this.object.add(group);
     }
-    for (const uri of wanted) if (!this.queue.includes(uri)) this.queue.push(uri);
     this.total += wanted.size;
+    // What the browser already holds is used at once; only the rest is asked for.
+    for (const uri of wanted) meshCache.get(uri).then(bytes => {
+      if (bytes) this.accept(uri, bytes); else if (!this.queue.includes(uri)) this.queue.push(uri);
+    });
     this.layers.emit();
   }
 

@@ -150,7 +150,7 @@ export class Pointers {
     const point = this.grabPoint(pointer);
     if (!point) return;
     this.worldGrabs.set(pointer.id, {pointer, held: this.stage.toRobot(point.clone())});
-    this.twoHand = null;
+    this.twoHand = null; this.stage.onManualMove?.();
   }
 
   endWorldGrab(pointer) {
@@ -341,6 +341,7 @@ export class Pointers {
         const step = dt * 0.5 / stage.view.scale, c = Math.cos(-stage.view.yaw), s = Math.sin(-stage.view.yaw);
         // Stick right/forward in the viewer's frame -> robot x/y through the view's yaw.
         const right = x * step, forward = -y * step;
+        stage.onManualMove?.();
         stage.target.center.x += forward * c - right * s; stage.target.center.y += -(right * c + forward * s);
       }
     }

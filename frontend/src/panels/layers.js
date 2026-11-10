@@ -20,9 +20,7 @@ export function openLayers(app) {
       if (!all.length) { ui.empty(content, 'None of this blueprint\'s streams has a drawing yet.', 'Clouds, images, poses, paths, maps, tf, URDF.'); return; }
       const actions = content.cutTop(42, 10).cols(2, 10);
       ui.button(actions[0], 'FIT TO TABLE', () => { layers.frameAll(); }, {id: 'fit', icon: 'scale', size: SIZE.sm});
-      const robot = all.find(layer => layer.kind === 'robot');
-      const root = robot?.model?.links[0]?.link;
-      ui.button(actions[1], layers.follow ? 'FOLLOWING ROBOT' : 'FOLLOW ROBOT', () => { layers.follow = layers.follow ? null : root; }, {id: 'follow', icon: 'robot', size: SIZE.sm, on: !!layers.follow, enabled: !!root});
+      ui.button(actions[1], layers.follow ? 'FOLLOWING ROBOT' : 'FOLLOW ROBOT', () => layers.setFollow(!layers.follow), {id: 'follow', icon: 'robot', size: SIZE.sm, on: !!layers.follow, enabled: !!layers.robotRoot()});
       ui.scroll(content, 'list', inner => {
         let y = inner.y;
         for (const [kind, title] of GROUPS) {

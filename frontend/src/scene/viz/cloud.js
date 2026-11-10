@@ -42,7 +42,7 @@ export class CloudLayer extends Layer {
     super(layers, {kind: 'cloud', label: topic.topic, topic, glyph: 'cloud'});
     const theme = this.theme;
     this.geometry = new THREE.BufferGeometry();
-    this.capacity = 0; this.count = 0; this.frameId = ''; this.pointSize = /map/i.test(topic.topic) ? 0.05 : 0.03;
+    this.capacity = 0; this.count = 0; this.frameId = ''; this.pointSize = /map/i.test(topic.topic) ? 0.04 : 0.03;
     this.material = this.stage.clip(new THREE.ShaderMaterial({
       uniforms: {
         placement: {value: new THREE.Matrix4()}, size: {value: this.pointSize}, viewport: {value: 1000}, low: {value: -0.2}, high: {value: 2.2},
@@ -89,6 +89,10 @@ export class CloudLayer extends Layer {
     if (intensity) { for (let i = 0; i < count; i++) shade.array[i] = intensity[i] / 255; shade.needsUpdate = true; shade.clearUpdateRanges?.(); shade.addUpdateRange?.(0, count); }
     this.material.uniforms.useIntensity.value = intensity ? 1 : 0;
     geometry.setDrawRange(0, count); this.count = count;
+    // A scan is drawn as light that adds up; a dense map drawn that way burns to white, so it is drawn as dots.
+    const dense = count > 60000, blending = dense ? THREE.NormalBlending : THREE.AdditiveBlending;
+    if (this.material.blending !== blending) { this.material.blending = blending; this.material.needsUpdate = true; }
+    this.material.uniforms.opacity.value = dense ? 0.6 : 0.9;
     this.detail = `${count.toLocaleString()} pts`;
     this.measure(positions, count);
   }

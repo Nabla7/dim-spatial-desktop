@@ -172,8 +172,8 @@ export function openModule(app, moduleId) {
       const bar = content.cutTop(42, 12), now = performance.now(), armed = state.armed && now - state.armedAt < 3000 ? state.armed : null;
       if (state.armed && !armed) state.armed = null;
       if (armed) panel.invalidate();
-      ui.button(bar.cutRight(110, 8), armed === 'unload' ? 'CONFIRM' : 'UNLOAD', () => act('unload'), {id: 'unload', tone: 'danger', size: SIZE.sm, on: armed === 'unload'});
-      ui.button(bar.cutRight(118, 14), armed === 'restart' ? 'CONFIRM' : 'RESTART', () => act('restart'), {id: 'restart', tone: 'warn', size: SIZE.sm, icon: armed === 'restart' ? null : 'refresh', on: armed === 'restart'});
+      ui.button(bar.cutRight(104, 8), armed === 'unload' ? 'CONFIRM' : 'UNLOAD', () => act('unload'), {id: 'unload', tone: 'danger', size: SIZE.xs, on: armed === 'unload'});
+      ui.button(bar.cutRight(104, 14), armed === 'restart' ? 'CONFIRM' : 'RESTART', () => act('restart'), {id: 'restart', tone: 'warn', size: SIZE.xs, on: armed === 'restart'});
       ui.chips(bar, [['rpcs', `RPCS ${current.rpcs.length}`], ['streams', `STREAMS ${current.streams.length}`]], state.tab, tab => { state.tab = tab; }, {id: 'tab'});
       ui.scroll(content, state.tab, inner => state.tab === 'rpcs' ? drawRpcs(ui, inner, current) : drawStreams(ui, inner, current));
     },
