@@ -2,8 +2,8 @@
 
 A DimOS Desktop app: a page (three.js + WebXR, no build step) and a small Deno server. The page shows
 the running blueprint as holograms, a heads-up cockpit on a screen and a room in a headset. The server
-serves the page, runs the coding agents the page talks to (Claude Code, Codex), and reads the Python
-source behind an RPC. Read README.md for what it does.
+serves the page, runs the coding agents the page talks to (Claude Code, Codex), reads the Python
+source behind an RPC, and reads recorded episodes for the replay. Read README.md for what it does.
 
 ## Rules
 
@@ -25,6 +25,11 @@ source behind an RPC. Read README.md for what it does.
   has and removes API keys from its environment. It adds no permissions: a prompt the agent would show in
   a terminal is shown in the panel, and the user answers it.
 - **A layer subscribes only while shown.** Hidden streams must cost no bandwidth.
+- **A recording is read, never written.** Replay computes nothing into a dataset's folders: a world made
+  again and a dataset check go under this app's data folder. Re-simulation runs only on a press.
+- **The page knows no recording format.** An episode reaches it as a clock with named cameras, signals,
+  bands, checks and facts, and a world as shapes fixed to bodies with a pose table. What a file format or
+  a robot needs is in the reader (`server/replay/`), found from the data (the simulation record), not named.
 
 ## Layout
 
@@ -37,6 +42,9 @@ server/session.ts           AgentSession: the numbered event log every agent bac
 server/claude.ts            Claude Code in headless stream-json (stdin turns, stdout events, permission requests)
 server/codex.ts             `codex app-server` over JSON-RPC (threads, turns, approval requests)
 server/source.ts            the Python source of one method of a module class, found by text, never imported
+server/replay.ts            datasets on disk, the reader process per Python runtime, routes api/replay/*
+server/replay/worker.py     reads an episode: frames, checks, images, the model's shapes, where each body was
+server/replay/recover.py    runs an episode's physics again in sim2 and compares it with the recording
 frontend/index.html         theme link, import map (vendor/three), boot note
 frontend/src/update.js      reloads an open page when the server serves a newer build
 frontend/src/main.js        entry; ?emulate installs the WebXR emulator
@@ -48,6 +56,7 @@ frontend/src/app.js         App: renderer, stage, dock, pointers, bus, blueprint
   data/blueprint.js         the live model: modules, RPCs, streams, topics, rates, process stats
   data/controls.js          what can be commanded, found from the blueprint; arming, the lease, the deadman
   data/agents.js, cbor.js   chat backends (a session agent per coding agent, the blueprint's own agent)
+  data/replay.js            the open episode: playhead, pictures around it, world, dataset check
   ui/holo.js                HoloPanel + Ui: immediate-mode widgets on a canvas, hit regions
   ui/rect.js, icons.js      rect-cut layout, line icons
   ui/dock.js                where panels sit: HUD columns on a screen, arcs in a room
@@ -60,6 +69,8 @@ frontend/src/app.js         App: renderer, stage, dock, pointers, bus, blueprint
   scene/tf.js, feeds.js     transform tree; camera video textures shared per topic
   scene/viz/*.js            one file per kind of drawing
   scene/halo.js             the ring of module plates and topic arcs
+  scene/hologram.js         the hologram material the robot model and a replayed world share
+  scene/replay.js           a replayed episode's world on the table: bodies, ghost, paths, camera frustums
   panels/*.js               one file per panel; each exports open<Name>(app)
 ```
 
@@ -77,6 +88,12 @@ frontend/src/app.js         App: renderer, stage, dock, pointers, bus, blueprint
 - **Agents** (`server/session.ts`): a backend turns its program's protocol into the events `init, user,
   thinking, delta, assistant, tool_result, permission, permission_answer, result, limits, note, exit`.
   The page long-polls them. To add an agent, write one more `AgentSession` and list it in `BACKENDS`.
+- **Replay** (`server/replay/worker.py`, `data/replay.js`): frame fields are sorted by what they hold
+  (lists of numbers are signals, numbers are series, words are bands, booleans are flags); signals with the
+  same labels share tracks; the recorded robot is the one named like `robot_type` among the record's robots
+  that have every recorded joint; a sampled quantity named like a body of the model is that body's placement.
+  The worker answers `episode`, `images`, `scene`, `motion`: bytes travel as `[uint32 n][JSON, n bytes][bytes]`.
+  While an episode is open the live layers are hidden and not updated; `ReplayScene` owns the table.
 
 ## Adding things
 
@@ -88,6 +105,10 @@ frontend/src/app.js         App: renderer, stage, dock, pointers, bus, blueprint
   State changes go through widget callbacks (they invalidate the panel); outside changes call `panel.invalidate()`.
   Listeners use `{signal: panel.signal}` so they end with the panel.
 - **A gateway call**: add it to `data/gateway.js` as a string literal and to `dimos.yaml`.
+- **A check of an episode**: one `check(...)` in `inspect()` of `server/replay/worker.py`, with `flag(...)`
+  for the frames it fails on. It then shows in CHECKS, on the timeline and in the dataset check.
+- **Another recording format**: a reader in `server/replay/` that answers the same four requests; the
+  page needs no change.
 
 ## Trying a change
 
@@ -99,6 +120,7 @@ here, so a new route is refused with HTTP 403 until `restart` copies the file. `
 back to the committed build.
 
 Check with `node --check` on each module, `deno check server/main.ts` and `dimos-desktop app check .`.
+The replay reader runs by hand: `<dimos checkout>/.venv/bin/python server/replay/worker.py describe <episode folder>`.
 There are no unit tests yet; verify in the page against a running blueprint (`window.spatial` is the app)
 and with `?emulate` for XR paths. A new file must be `git add`ed before `nix build .#dimosApp` sees it.
 Vendored code lives in `frontend/vendor/` (three.js 0.180, IWER 2.8 for emulation only); do not edit it.

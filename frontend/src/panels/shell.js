@@ -10,13 +10,14 @@ import {openLogs} from './logs.js';
 import {openStats} from './stats.js';
 import {openView} from './view.js';
 import {openControl} from './control.js';
+import {openReplay} from './replay.js';
 
 const PHASE_TONE = {starting: 'warn', running: 'ok', stopping: 'warn', failed: 'danger', stopped: 'muted'};
 
 export function openShell(app) {
   const blueprint = app.blueprint;
   const head = app.panel({
-    id: 'head', bare: true, width: 0.94, height: 0.05,
+    id: 'head', bare: true, width: 1.0, height: 0.05,
     draw(ui, content) {
       const toast = app.toasts[0];
       const brand = ui.text('DIMOS', content.x + 6, content.cy + 1, {size: SIZE.sm, family: 'display', color: ui.tone('primary'), track: 4});
@@ -53,13 +54,14 @@ export function openShell(app) {
     ['layers', 'LAYERS', 'layers', () => openLayers(app)],
     ['control', 'CONTROL', 'robot', () => openControl(app)],
     ['agent', 'AGENT', 'agent', () => openAgent(app)],
+    ['replay', 'REPLAY', 'film', () => openReplay(app)],
     ['logs', 'LOGS', 'log', () => openLogs(app)],
     ['stats', 'STATS', 'pulse', () => openStats(app)],
     ['view', 'VIEW', 'scale', () => openView(app)],
   ];
   app.openers = Object.fromEntries(items.map(([id, , , open]) => [id, open]));
   const bar = app.panel({
-    id: 'bar', bare: true, width: 0.94, height: 0.068,
+    id: 'bar', bare: true, width: 1.0, height: 0.068,
     draw(ui, content) {
       const xr = app.xr, right = content.cutRight(280, 16);
       const cells = content.cols(items.length, 8);

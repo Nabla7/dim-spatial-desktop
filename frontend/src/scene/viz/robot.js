@@ -10,31 +10,7 @@ import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
 import {Layer} from '../layer.js';
 import {decodeFile} from '../../data/bus.js';
 import {gateway} from '../../data/gateway.js';
-
-const holoVertex = /* glsl */`
-#include <clipping_planes_pars_vertex>
-varying vec3 vNormal, vView;
-void main() {
-  vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-  vNormal = normalize(normalMatrix * normal); vView = normalize(-mvPosition.xyz);
-  gl_Position = projectionMatrix * mvPosition;
-  #include <clipping_planes_vertex>
-}`;
-
-const holoFragment = /* glsl */`
-#include <clipping_planes_pars_fragment>
-uniform vec3 base, rim;
-uniform float time, opacity;
-varying vec3 vNormal, vView;
-void main() {
-  #include <clipping_planes_fragment>
-  float facing = abs(dot(normalize(vNormal), normalize(vView)));
-  float edge = pow(1.0 - facing, 2.4);
-  float scan = 0.88 + 0.12 * sin(gl_FragCoord.y * 1.4 - time * 4.0);
-  vec3 color = base * (0.35 + 0.4 * facing) + rim * edge * 1.5;
-  gl_FragColor = vec4(color * scan, (0.42 + edge * 0.58) * opacity);
-  #include <colorspace_fragment>
-}`;
+import {hologram} from '../hologram.js';
 
 // "1 2 3" -> [1, 2, 3]; a missing or malformed attribute gives the fallback.
 function numbers(text, fallback) {
@@ -149,10 +125,7 @@ export class RobotLayer extends Layer {
   // scenery: a model that is the surroundings rather than the robot is drawn fainter, and never hides the robot.
   material(color, scenery = false) {
     const theme = this.theme, base = new THREE.Color().setRGB(color[0], color[1], color[2], THREE.SRGBColorSpace);
-    const holo = this.stage.clip(new THREE.ShaderMaterial({
-      uniforms: {base: {value: base.clone().lerp(theme.three.primary, 0.55)}, rim: {value: theme.three.primary.clone()}, time: this.uniforms.time, opacity: {value: scenery ? 0.3 : 0.9}},
-      vertexShader: holoVertex, fragmentShader: holoFragment, clipping: true, transparent: true, depthWrite: !scenery,
-    }));
+    const holo = this.stage.clip(hologram({base: base.clone().lerp(theme.three.primary, 0.55), rim: theme.three.primary.clone(), time: this.uniforms.time, opacity: scenery ? 0.3 : 0.9, depthWrite: !scenery}));
     const solid = this.stage.clip(new THREE.MeshStandardMaterial({color: base, roughness: 0.6, metalness: 0.15}));
     this.materials.push({holo, solid, color: base});
     return {holo, solid};

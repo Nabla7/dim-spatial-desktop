@@ -29,6 +29,8 @@ every panel and every hologram is built from what the dimos gateway says is runn
 
 - **Control**: the robot's controls, found from the blueprint (below).
 - **Agent**: a chat with Claude Code or Codex on this machine, or with the agent of an agentic blueprint (below).
+- **Replay**: recorded episodes instead of the live blueprint: the world, the cameras and every signal at a
+  playhead you can scrub, with checks of the episode and of the whole dataset (below).
 - **Logs**, **Load** (per-process CPU and memory, per-topic rate and bytes) and **View** (scale, floor, lid, life size).
 
 Desktop is told what the app shows, so an agent that asks Desktop can know what you are looking at, and
@@ -104,6 +106,63 @@ The agent is told where Desktop's gateways are and what you have on screen. Code
 sandbox, which has no network, so it asks before a command that reaches the gateway.
 Desktop's own agent (dimcode) and the `dimos agent` harness are not wired in.
 
+## Replay
+
+![A recorded episode on the table, with its cameras, signals and timeline](docs/images/replay.png)
+
+**REPLAY** shows recorded episodes in place of the live blueprint. A dataset is a folder named `episodes`
+whose subfolders each hold a `metadata.json` and an MCAP of frames, as dimos's learning loop writes them
+(one JSON frame per control step: joint state, action, camera images, time stamps). Datasets under
+Desktop's app data are found by themselves. Any other folder is added by its path.
+
+An open episode has:
+
+- **The deck**, above the command bar: play, step, speed (¼× to 4×), loop, and a timeline with the
+  episode's phases and what the checks flagged. Drag on it to scrub. `Space` plays and pauses, `←` `→`
+  step one frame (with Shift one second), `Home` and `End` jump to the ends. Time is the episode's control
+  clock. It is not the MCAP's log time, which for an episode rendered offline is the wall clock of the render.
+- **Cameras**: each camera's picture at the playhead, and how old it was when the state was read.
+- **Signals**: every recorded quantity over the whole episode, with the playhead on it. Joint state against
+  the actions, the state one step after a command against that command, image ages, object positions.
+  Press or drag in a track to go there.
+- **The world on the table**, when the episode names a sim2 run record: the shapes of its compiled MuJoCo
+  model with every body where it was. The deck's switches add the pose the command asked for (**GHOST**),
+  the path of each thing that travelled (**PATHS**), each camera as a frustum with its picture (**CAMS**)
+  and the fixed surroundings (**ROOM**), and choose a solid or a hologram look.
+- **Facts**: `metadata.json` and the simulation record, as they were written.
+- **Checks** (below), and a button that hands the episode to a coding agent.
+
+Where the world comes from depends on what was saved with the episode:
+
+| the episode has | the table shows |
+|---|---|
+| a world history (`world-history.npz`) | **WORLD**: every body at every snapshot, restored by dimos's own sim2 reader |
+| no history, but its list of commands (`trajectory.npz`) | **ARM ONLY**: the robot from its recorded joint states; objects stay where they started. **RUN THE PHYSICS AGAIN** repeats the episode in sim2 from the recorded start and commands (no cameras, about 15 s), compares the joint states it gets with the recorded ones, and then shows the whole world (**RE-SIM**) with that comparison |
+| no simulation record | no world; cameras and signals only |
+
+### Checks
+
+**CHECKS** reports on the open episode. Each line says what was tested and what was found:
+the file's hash against `metadata.json`; the frame count; a steady control clock; every command applied;
+accepted action equal to intended action; actions inside the joint limits; no jumps in the joint state;
+for each camera an image in every frame, of the declared size, new in every frame, taken at most 150 ms
+before the state and delivered before it; the recorded joint state against the world history; the outcome
+against the physical validation. A failing frame is marked on the timeline.
+
+**DATASET → CHECK EVERY EPISODE** runs the same checks on all episodes (about 0.3 s each) and adds what
+only shows across them: one data contract (joint names, rate, image shape, cameras, action meaning), a
+seed and a file of its own for each episode, and whether the kept episodes are a fair sample of what was
+tried. When a generation report lies beside the episodes it draws what became of every attempt, where
+each object was placed in kept and rejected attempts, and each sampled quantity for kept against not kept.
+
+### How it reads
+
+The server lists datasets from their `metadata.json` files. An episode is read by a Python process
+(`server/replay/worker.py`) started with the runtime that wrote it: the virtual environment of the dimos
+checkout named in the episode's simulation record, so the model loads with the MuJoCo that compiled it.
+Nothing is written into a dataset. A re-simulated world and a dataset check are kept under this app's own
+data folder (`replay/`).
+
 ## Pointing, moving, typing
 
 | | screen | headset |
@@ -162,6 +221,11 @@ AGENTS.md says how the code is laid out and where an addition goes.
   offered; call it from its module's panel.
 - An RPC that takes a Python object cannot be called from the page.
 - The agents need `claude` or `codex` installed and logged in on the machine that runs Desktop.
+- Replay reads one format: learning episodes (`dimos.learning.frame.v1` frames in an MCAP beside a
+  `metadata.json`). Robot recordings from Controller's recorder (MCAP of dimos messages, `.db`) are not read.
+- The world of an episode needs its compiled model and the Python environment that wrote it. Running the
+  physics again works for episodes of dimos's imitation loop, whose generator it repeats
+  (`dimos.imitation.loop.generation`); the result is close to the recording, not identical, and says by how much.
 
 - One blueprint at a time, as the gateway.
 - A `UrdfManager` given several models answers `*.urdf` with the first. The others are asked for by the

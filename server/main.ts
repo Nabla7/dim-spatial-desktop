@@ -1,17 +1,19 @@
 // The app's server. Desktop starts it with DIMOS_APP in the environment and forwards everything under
-// /apps/<name>/ to its socket. It does two things: serve the page, and run agent sessions (Claude Code,
-// Codex) that the page talks to. The page reaches every route here with a relative URL; they are private
-// routes (dimos.yaml x-private): nothing but this app's own pages may call them.
+// /apps/<name>/ to its socket. It serves the page, runs agent sessions (Claude Code, Codex) that the page
+// talks to, and reads recorded episodes for the page's replay. The page reaches every route here with a
+// relative URL; they are private routes (dimos.yaml x-private): nothing but this app's own pages may call them.
 import { CLAUDE_EFFORTS, CLAUDE_MODELS, ClaudeSession, findClaude } from "./claude.ts";
 import { CODEX_EFFORTS, codexModels, CodexSession, findCodex } from "./codex.ts";
 import type { AgentSession, Choice, SessionOptions } from "./session.ts";
 import { methodSource } from "./source.ts";
+import { Replay } from "./replay.ts";
 
 const app = JSON.parse(Deno.env.get("DIMOS_APP") ?? "{}");
 const flag = (name: string) => { const index = Deno.args.indexOf(name); return index >= 0 ? Deno.args[index + 1] : undefined; };
 const frontend = (flag("--frontend") ?? new URL("../frontend", import.meta.url).pathname).replace(/\/+$/, "");
 const appName = app.name ?? "dim-spatial-desktop";
 const desktopUrl = app.desktopUrl ?? "http://127.0.0.1:5555";
+const replay = new Replay(app);
 
 const TYPES: Record<string, string> = {
   html: "text/html; charset=utf-8", js: "text/javascript; charset=utf-8", mjs: "text/javascript; charset=utf-8", css: "text/css; charset=utf-8",
@@ -110,6 +112,7 @@ function systemPrompt(): string {
     "Write for a small floating panel that shows plain text: short paragraphs, no tables, no headings, little markdown. Lead with the answer.",
     `DimOS Desktop is at ${desktopUrl}. The dimos gateway is ${desktopUrl}/gateways/dimos: GET /active (what runs), GET /active/modules (module instances, their RPCs and streams), POST /active/modules/{id}/rpcs/{name} with {"kwargs": {...}} (call an RPC; JSON values only), GET /active/log. For RPCs that take Python objects use the dimos Python API from the checkout${app.dimosPython ? ` (${app.dimosPython})` : ""}.`,
     `What the user has on screen now: GET ${desktopUrl}/gateways/desktop/views/${appName}. To point at a module in their view: POST ${desktopUrl}/gateways/desktop/views/${appName}/highlight with {"kind": "module", "id": "<module id>"}.`,
+    "When that view has `replay`, the user is looking at a recorded episode instead of the live blueprint: `replay.folder` holds its metadata.json and its MCAP (one JSON frame per control step, schema dimos.learning.frame.v1: joint state, action, PNG images, time stamps), and `replay.frame` is where the playhead is.",
     "Do not move a robot, real or simulated, unless the user asked for that motion.",
   ].join("\n");
 }
@@ -180,14 +183,16 @@ function handler(request: Request): Response | Promise<Response> {
     if (parts[1] === "agent") return agentApi(request, parts.slice(2));
     if (parts[1] === "version" && request.method === "GET") return version().then((stamp) => json({ stamp }));
     if (parts[1] === "source" && request.method === "GET") return source(url);
+    if (parts[1] === "replay") return replay.handle(request, parts.slice(2), url);
     return json({ error: "not found" }, 404);
   }
   if (request.method !== "GET" && request.method !== "HEAD") return new Response("method not allowed", { status: 405 });
   return serveFile(url.pathname);
 }
 
-addEventListener("unload", () => { for (const session of sessions.values()) session.close(); });
-for (const signal of ["SIGTERM", "SIGINT"] as const) Deno.addSignalListener(signal, () => { for (const session of sessions.values()) session.close(); Deno.exit(0); });
+const shutDown = () => { for (const session of sessions.values()) session.close(); replay.close(); };
+addEventListener("unload", shutDown);
+for (const signal of ["SIGTERM", "SIGINT"] as const) Deno.addSignalListener(signal, () => { shutDown(); Deno.exit(0); });
 
 if (app.socket) {
   try { await Deno.remove(app.socket); } catch { /* no stale socket */ }

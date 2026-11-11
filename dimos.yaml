@@ -8,11 +8,13 @@ provides:
     version: 1.0.0
     description: The running blueprint as holograms, on a screen and in a headset, with a chat to a coding agent.
   paths: {}
-  # The agent bridge runs a coding agent as this user: only this app's own pages may reach it.
+  # The agent bridge runs a coding agent as this user, and the replay reads recordings from this
+  # machine's disk: only this app's own pages may reach them.
   x-private:
     - api/agent/*
     - api/version
     - api/source
+    - api/replay/*
 uses:
   "@dimos-gateway":
     - GET active

@@ -25,7 +25,7 @@ export class Dock extends EventTarget {
   has(id) { return this.entries.has(id) && !this.entries.get(id).panel.closing; }
   get(id) { return this.entries.get(id)?.panel; }
 
-  // slot: left | right | farLeft | farRight | bar (bottom centre) | head (top centre) | keys (above the bar)
+  // slot: left | right | farLeft | farRight | bar (bottom centre) | head (top centre) | deck (above the bar) | keys (above those)
   open(panel, slot = 'right') {
     const existing = this.entries.get(panel.id);
     if (existing) { existing.panel.dispose(); this.entries.delete(panel.id); }
@@ -55,7 +55,7 @@ export class Dock extends EventTarget {
     if (this.mode !== 'hud') return preferred;
     const {height} = this.hudExtent(), perPixel = height / Math.max(1, innerHeight);
     let free = height - 2 * MARGIN - (this.inset.top + this.inset.bottom) * perPixel;
-    for (const entry of this.entries.values()) if (entry.slot === 'bar' || entry.slot === 'head') free -= entry.panel.height + GAP;
+    for (const entry of this.entries.values()) if (['bar', 'head', 'deck'].includes(entry.slot) && !entry.panel.closing) free -= entry.panel.height + GAP;
     return Math.max(0.4, Math.min(0.8, free));
   }
 
@@ -76,12 +76,14 @@ export class Dock extends EventTarget {
     const top = height / 2 - MARGIN - this.inset.top * perPixel, bottom = -height / 2 + MARGIN + this.inset.bottom * perPixel;
     const barHeight = live.filter(e => e.slot === 'bar').reduce((h, e) => Math.max(h, e.panel.height), 0);
     const headHeight = live.filter(e => e.slot === 'head').reduce((h, e) => Math.max(h, e.panel.height), 0);
+    const deckHeight = live.filter(e => e.slot === 'deck').reduce((h, e) => Math.max(h, e.panel.height), 0);
+    const low = (barHeight ? barHeight + GAP : 0) + (deckHeight ? deckHeight + GAP : 0);
     // Side columns run from under the status strip to above the command bar.
-    const columnTop = top - (headHeight ? headHeight + GAP : 0), available = columnTop - bottom - (barHeight ? barHeight + GAP : 0);
+    const columnTop = top - (headHeight ? headHeight + GAP : 0), available = columnTop - bottom - low;
     // Columns: left/farLeft stack on the left edge, right/farRight on the right edge.
     const columns = {left: [], right: []};
     for (const entry of live) {
-      if (entry.slot === 'bar' || entry.slot === 'head' || entry.slot === 'keys') continue;
+      if (['bar', 'head', 'keys', 'deck'].includes(entry.slot)) continue;
       columns[entry.slot.toLowerCase().includes('left') ? 'left' : 'right'].push(entry);
     }
     // A window too small for a column closes that column's oldest panels rather than shrinking text.
@@ -105,7 +107,9 @@ export class Dock extends EventTarget {
       if (entry.free) continue;
       if (entry.slot === 'bar') { entry.position.set(0, bottom + entry.panel.height / 2, -HUD_DISTANCE); entry.quaternion.identity(); }
       if (entry.slot === 'head') { entry.position.set(0, top - entry.panel.height / 2, -HUD_DISTANCE); entry.quaternion.identity(); }
-      if (entry.slot === 'keys') { entry.position.set(0, bottom + (barHeight ? barHeight + GAP : 0) + entry.panel.height / 2, -HUD_DISTANCE); entry.quaternion.identity(); }
+      // A little nearer than the columns: a side panel that was open before the deck came must not cover it.
+      if (entry.slot === 'deck') { entry.position.set(0, bottom + (barHeight ? barHeight + GAP : 0) + entry.panel.height / 2, -HUD_DISTANCE + 0.03); entry.quaternion.identity(); }
+      if (entry.slot === 'keys') { entry.position.set(0, bottom + low + entry.panel.height / 2, -HUD_DISTANCE); entry.quaternion.identity(); }
     }
   }
 
@@ -122,6 +126,7 @@ export class Dock extends EventTarget {
       // The command bar lies along the near edge of the table (app.js puts the table 0.98 m out, 0.58 m below the eyes).
       if (entry.slot === 'bar') { place(entry, 0, 0.43, eye - 0.55, -0.9); continue; }
       if (entry.slot === 'head') { place(entry, 0, 1.25, eye + 0.34, 0.12); continue; }
+      if (entry.slot === 'deck') { place(entry, 0, 0.5, eye - 0.455, -0.75); continue; }
       if (entry.slot === 'keys') { place(entry, 0, 0.52, eye - 0.36, -0.55); continue; }
       (columns[entry.slot] ||= []).push(entry);
     }

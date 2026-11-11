@@ -12,6 +12,14 @@ export const icons = {
   grid: ctx => { for (const x of [-7, 1]) for (const y of [-7, 1]) ctx.strokeRect(x, y, 6, 6); },
   play: ctx => poly(ctx, [[-5, -8], [8, 0], [-5, 8]], true, true),
   stop: ctx => ctx.fillRect(-7, -7, 14, 14),
+  pause: ctx => { ctx.fillRect(-7, -8, 5, 16); ctx.fillRect(2, -8, 5, 16); },
+  // One frame back or on: a bar and a triangle. A whole episode back or on: two triangles.
+  stepBack: ctx => { ctx.fillRect(-8, -7, 3, 14); poly(ctx, [[7, -7], [-3, 0], [7, 7]], true, true); },
+  stepOn: ctx => { ctx.fillRect(5, -7, 3, 14); poly(ctx, [[-7, -7], [3, 0], [-7, 7]], true, true); },
+  skipBack: ctx => { poly(ctx, [[0, -7], [-9, 0], [0, 7]], true, true); poly(ctx, [[9, -7], [0, 0], [9, 7]], true, true); },
+  skipOn: ctx => { poly(ctx, [[0, -7], [9, 0], [0, 7]], true, true); poly(ctx, [[-9, -7], [0, 0], [-9, 7]], true, true); },
+  // A strip of film: recorded data to play back.
+  film: ctx => { ctx.strokeRect(-9, -7, 18, 14); for (const x of [-6, 0, 6]) { ctx.fillRect(x - 1, -6, 2, 2.5); ctx.fillRect(x - 1, 3.5, 2, 2.5); } poly(ctx, [[-2.5, -2.5], [3, 0], [-2.5, 2.5]], true, true); },
   refresh: ctx => { path(ctx, () => ctx.arc(0, 0, 8, -0.4, Math.PI * 1.45)); poly(ctx, [[4, -9], [8.5, -3.5], [2, -2.5]], true, true); },
   chevron: ctx => poly(ctx, [[-4, -7], [4, 0], [-4, 7]]),
   down: ctx => poly(ctx, [[-7, -4], [0, 4], [7, -4]]),

@@ -1,4 +1,5 @@
-// The HTTP side: the dimos gateway (what could run, what runs), Desktop's own gateway and the Launcher.
+// The HTTP side: the dimos gateway (what could run, what runs), Desktop's own gateway, the Launcher and
+// this app's own server.
 // Every URL is relative to the page (/apps/<name>/) and every call here is declared in dimos.yaml.
 const url = path => new URL(path, location.href);
 
@@ -26,6 +27,24 @@ async function request(path, {method = 'GET', body, timeout = 15000} = {}) {
 }
 
 const segment = encodeURIComponent;
+
+// An answer of this app's server that carries bytes: [uint32 length of a JSON header][header][bytes].
+// The header is padded so the bytes start on a multiple of four and can be viewed as typed arrays.
+async function binary(path, {timeout = 120000} = {}) {
+  const controller = new AbortController(), timer = setTimeout(() => controller.abort(), timeout);
+  try {
+    const response = await fetch(url(path), {signal: controller.signal, cache: 'no-store'});
+    if (!response.ok || (response.headers.get('content-type') || '').includes('json')) {
+      const data = await response.json().catch(() => null);
+      throw new GatewayError(response.status, data?.error || `HTTP ${response.status}`);
+    }
+    const buffer = await response.arrayBuffer(), length = new DataView(buffer).getUint32(0, true);
+    return {meta: JSON.parse(new TextDecoder().decode(new Uint8Array(buffer, 4, length))), buffer, offset: 4 + length};
+  } catch (error) {
+    if (error.name === 'AbortError') throw new GatewayError(0, 'no answer (timed out)');
+    throw error;
+  } finally { clearTimeout(timer); }
+}
 
 export const gateway = {
   // -- the running blueprint ------------------------------------------------------------------------
@@ -59,6 +78,20 @@ export const gateway = {
     permission: (id, requestId, allow, session = false) => request(`api/agent/sessions/${segment(id)}/permission`, {method: 'POST', body: {requestId, allow, session}}),
     interrupt: id => request(`api/agent/sessions/${segment(id)}/interrupt`, {method: 'POST', body: {}}),
     close: id => request(`api/agent/sessions/${segment(id)}`, {method: 'DELETE'}),
+  },
+
+  // -- this app's own server: recorded episodes, for the replay ----------------------------------------
+  replay: {
+    datasets: (rescan = false) => request(`api/replay/datasets${rescan ? '?rescan=1' : ''}`, {timeout: 30000}),
+    add: path => request('api/replay/datasets', {method: 'POST', body: {path}, timeout: 30000}),
+    episodes: id => request(`api/replay/datasets/${segment(id)}/episodes`, {timeout: 30000}),
+    episode: (id, name) => request(`api/replay/datasets/${segment(id)}/episodes/${segment(name)}`, {timeout: 120000}),
+    images: (id, name, camera, start, count) => binary(`api/replay/datasets/${segment(id)}/episodes/${segment(name)}/images?camera=${segment(camera)}&start=${start}&count=${count}`),
+    scene: (id, name, have) => binary(`api/replay/datasets/${segment(id)}/episodes/${segment(name)}/scene${have ? `?have=${segment(have)}` : ''}`),
+    motion: (id, name) => binary(`api/replay/datasets/${segment(id)}/episodes/${segment(name)}/motion`),
+    recover: (id, name) => request(`api/replay/datasets/${segment(id)}/episodes/${segment(name)}/recover`, {method: 'POST', body: {}}),
+    recovery: (id, name) => request(`api/replay/datasets/${segment(id)}/episodes/${segment(name)}/recover`),
+    audit: (id, start = false) => request(`api/replay/datasets/${segment(id)}/audit`, start ? {method: 'POST', body: {}} : {}),
   },
 
   // -- Desktop --------------------------------------------------------------------------------------
