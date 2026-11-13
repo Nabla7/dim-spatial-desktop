@@ -440,7 +440,6 @@ export class SceneView extends EventTarget {
     } else {
       stage.root.position.set(0, 0, 0); stage.root.rotation.set(0, 0, 0);
       app.orbit.enableRotate = false; app.orbit.enableZoom = false;
-      app.pointers.panelsFirst = true;
       walk.roll = 0; walk.pitch = 0;
       if (forward) { walk.yaw = Math.atan2(forward[1], forward[0]); walk.pitch = Math.asin(THREE.MathUtils.clamp(forward[2], -1, 1)); }
     }
@@ -480,7 +479,6 @@ export class SceneView extends EventTarget {
       stage.root.position.copy(saved.root); stage.root.rotation.set(0, saved.turn, 0);
       app.orbit.enableRotate = saved.rotate; app.orbit.enableZoom = saved.zoom;
       app.camera.fov = saved.fov; app.camera.updateProjectionMatrix(); app.resetCamera(); app.dock.layout();
-      app.pointers.panelsFirst = false;
     }
     stage.apply();
     this.clipped = null;

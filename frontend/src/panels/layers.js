@@ -3,6 +3,7 @@
 import {SIZE} from '../ui/holo.js';
 import {Rect} from '../ui/rect.js';
 import {hz} from '../util.js';
+import {openScreen} from './screen.js';
 
 const GROUPS = [['robot', 'Robot'], ['rgbd', 'Depth cameras'], ['camera', 'Cameras'], ['cloud', 'Point clouds'], ['pose', 'Poses'], ['path', 'Paths'], ['grid', 'Maps'], ['frames', 'Frames']];
 
@@ -43,7 +44,7 @@ export function openLayers(app) {
               ui.chips(chips, [['holo', 'HOLO'], ['solid', 'SOLID']], layer.style, style => layer.setStyle(style), {id: `style:${layer.key}`, size: SIZE.xs});
             } else if (layer.colorTopic) {
               const feed = new Rect(right - 84, row.y + 12, 84, 34), open = app.dock.has(`feed:${layer.colorTopic.key}`);
-              ui.button(feed, 'SCREEN', () => openFeed(app, layer.colorTopic), {id: `feed:${layer.key}`, size: SIZE.xs, on: open});
+              ui.button(feed, 'SCREEN', () => openScreen(app, layer.colorTopic), {id: `feed:${layer.key}`, size: SIZE.xs, on: open});
             }
             y += 58; ui.hair(inner.x, y, inner.r, y);
           }
@@ -58,28 +59,4 @@ export function openLayers(app) {
   const timer = setInterval(() => panel.invalidate(), 1000);
   panel.onDispose = () => clearInterval(timer);
   return app.dock.open(panel, 'left');
-}
-
-// One camera as a screen of its own: the same decoded video the table uses, drawn into a panel.
-export function openFeed(app, topic) {
-  const id = `feed:${topic.key}`;
-  if (app.dock.has(id)) { app.dock.close(id); return; }
-  const feed = app.layers.feeds.acquire(topic);
-  const panel = app.panel({
-    id, title: topic.topic.replace(/^\//, ''), glyph: 'camera', width: 0.44, height: 0.36, onClose: () => app.dock.close(id),
-    draw(ui, content) {
-      const video = feed.video, live = performance.now() - feed.lastAt < 1500;
-      panel.tag = feed.width ? `${feed.width}×${feed.height}` : '';
-      ui.ctx.fillStyle = ui.tone('bg', 0.9); ui.ctx.fillRect(content.x, content.y, content.w, content.h);
-      if (video.readyState >= 2 && video.videoWidth) {
-        const scale = Math.min(content.w / video.videoWidth, content.h / video.videoHeight), w = video.videoWidth * scale, h = video.videoHeight * scale;
-        ui.ctx.drawImage(video, content.cx - w / 2, content.cy - h / 2, w, h);
-      } else ui.empty(content, feed.error || 'Waiting for the first frame…');
-      ui.lamp(content.x + 14, content.y + 14, live ? 'ok' : 'warn', !live);
-      panel.invalidate();
-    },
-  });
-  panel.minInterval = 66;
-  panel.onDispose = () => app.layers.feeds.release(feed);
-  return app.dock.open(panel, 'right');
 }

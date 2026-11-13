@@ -26,6 +26,11 @@ README.md for what it does and docs/SCENES.md for what a scene is.
   has and removes API keys from its environment. It adds no permissions: a prompt the agent would show in
   a terminal is shown in the panel, and the user answers it.
 - **A layer subscribes only while shown.** Hidden streams must cost no bandwidth.
+- **An episode starts and ends on a press.** The episode control's `command` is called from START, SAVE,
+  DISCARD or their keys, never by the page itself. Asking it where it stands (`get_status`) is reading.
+- **On a screen the panels are in front.** They are drawn after the scene and hit before it (`App.renderFlat`,
+  `Pointers.cast`). In a headset they stand in the room and the nearer thing is in front. A change to
+  either must keep the two the same: what is drawn on top is what takes the press.
 - **A recording is read, never written.** Replay computes nothing into a dataset's folders: a world made
   again and a dataset check go under this app's data folder. Re-simulation runs only on a press.
 - **The page knows no recording format.** An episode reaches it as a clock with named cameras, signals,
@@ -69,12 +74,15 @@ frontend/src/app.js         App: renderer, stage, dock, pointers, bus, blueprint
   data/bus.js               zenoh-gateway client + msgs.js; key and type helpers; files.File decoder
   data/blueprint.js         the live model: modules, RPCs, streams, topics, rates, process stats
   data/controls.js          what can be commanded, found from the blueprint; arming, the lease, the deadman
+  data/episodes.js          episodes for training: the episode control and its recorders, found by the Spec; status, commands
+  data/launch.js            what a launch has to be told: required fields with no value, a session's task and folder
   data/agents.js, cbor.js   chat backends (a session agent per coding agent, the blueprint's own agent)
   data/replay.js            the open episode: playhead, pictures around it, world, dataset check
   data/scenes.js            the open scene: its revision, view, check, floor, what was pointed at, pins, comparison
   ui/holo.js                HoloPanel + Ui: immediate-mode widgets on a canvas, hit regions
   ui/rect.js, icons.js      rect-cut layout, line icons
-  ui/dock.js                where panels sit: HUD columns on a screen, arcs in a room
+  ui/dock.js                where panels sit: HUD columns on a screen, arcs in a room; kept panels, decks
+  ui/flow.js                which side panels stay and in which column each stands (no drawing; tested)
   ui/textinput.js           the hidden textarea every text box edits through
   input/pointers.js         mouse, controllers, hands -> panel events, picks, world grabs, drive sticks
   xr/session.js, hands.js   entering and leaving sessions; hand joints
@@ -88,6 +96,9 @@ frontend/src/app.js         App: renderer, stage, dock, pointers, bus, blueprint
   scene/hologram.js         the hologram material the robot model and a replayed world share
   scene/replay.js           a replayed episode's world on the table: bodies, ghost, paths, camera frustums
   panels/*.js               one file per panel; each exports open<Name>(app)
+  panels/screen.js          a camera as a screen: the video itself on a surface, four sizes, kept, brought back
+  panels/record.js          the episode deck (state, time, START SAVE DISCARD) and the Record panel
+tests/*.test.mjs            node --test: the panel flow, episodes, launch asks, shared speeds
 ```
 
 ## How the general rules are applied
@@ -101,6 +112,21 @@ frontend/src/app.js         App: renderer, stage, dock, pointers, bus, blueprint
   tf frames, topics, module ids). CODE shows `api/source`. EXPLAIN sends signature and source to a coding
   agent and keeps its answer per class and signature. A class-typed parameter is not sendable (the
   gateway passes JSON through): the form says so and offers the stream of the same type or the agent.
+- **Panels on a screen** (`ui/dock.js`, `ui/flow.js`): a side holds one tool; the next one opened takes its
+  place, as before. A panel with its pin lit (`panel.kept`, remembered per panel id) is not given up: the
+  next panel stands in a column beside it. A panel the user dragged is out of the columns and is never
+  closed for another. Decks stand on one another above the bar. A camera's screen (`panels/screen.js`)
+  starts kept, and the kept screens of a blueprint open again when it runs again.
+- **Episodes** (`data/episodes.js`, `panels/record.js`): found as dimos's own operator interface finds
+  them (`dimos/imitation/tui.py`): the module that answers `get_status()` and `command(event)` with an
+  `EpisodeStatus` is the episode control (`EpisodeControlSpec`), whatever its class. The String stream it
+  writes carries each change as JSON; a module that reads that stream and writes none is a recorder, and
+  its other inputs are what an episode holds (one that reads it and writes too is the operator's headset).
+  Nothing names a recorder class or a robot.
+- **What a launch is told** (`data/launch.js`, `panels/launcher.js`): from the blueprint's config as the
+  gateway gives it. A field that is required and has no value is asked for. For a blueprint with an
+  episode control, the text that control is configured with (the task) and the path its recorder is
+  configured with (the folder) are asked for too. Secrets and non-JSON fields stay with Desktop's Launcher.
 - **Agents** (`server/session.ts`): a backend turns its program's protocol into the events `init, user,
   thinking, delta, assistant, tool_result, permission, permission_answer, result, limits, note, exit`.
   The page long-polls them. To add an agent, write one more `AgentSession` and list it in `BACKENDS`.
@@ -114,7 +140,7 @@ frontend/src/app.js         App: renderer, stage, dock, pointers, bus, blueprint
   replayed episode or the live blueprint has the table, one at a time. The view is glTF with y up, turned
   to the table's z up; the files a GLB names are served beside it. Labels and marks keep their size on the
   table (`sized`), and a label shows whole or not at all. WALK is life size with the camera held by
-  `SceneView`: `app.frame` then skips OrbitControls and draws the panels in a second pass over the scene.
+  `SceneView`: `app.frame` then skips OrbitControls.
   A press becomes a ray in the scene's frame, started where it enters what the table's planes show.
   Revisions: number 0 is the manifest's; later ones come from JSON files dropped in the scene's inbox,
   which the page polls. A comparison is always the later revision against the earlier one.
@@ -125,7 +151,8 @@ frontend/src/app.js         App: renderer, stage, dock, pointers, bus, blueprint
   `this.listen(...)`, `update()` places by `this.place(object, frameId)`, materials go through
   `this.stage.clip(...)`), then one line in `Layers.sync()` choosing it by type.
 - **A panel**: `panels/<name>.js` exporting `open<Name>(app)` that builds `app.panel({id, title, draw(ui, content)})`
-  and calls `app.dock.open(panel, 'left' | 'right')`; add it to the bar in `panels/shell.js`.
+  and calls `app.dock.open(panel, 'left' | 'right')`; add it to the bar in `panels/shell.js`. Give it
+  `kept: true` only when the user opens it to watch it (a camera); `tools` puts small buttons in its title bar.
   State changes go through widget callbacks (they invalidate the panel); outside changes call `panel.invalidate()`.
   Listeners use `{signal: panel.signal}` so they end with the panel.
 - **A gateway call**: add it to `data/gateway.js` as a string literal and to `dimos.yaml`.
@@ -153,6 +180,7 @@ The replay reader runs by hand: `<dimos checkout>/.venv/bin/python server/replay
 The scene programs too, with a Python that has OpenUSD and MuJoCo's USD importer: `server/scenes/check.py <scene.usda>`,
 `server/scenes/derive.py <scene.usda> <out folder>`, `server/scenes/worker.py describe <scene.usda>` and
 `server/scenes/worker.py diff <before.usda> <after.usda>`.
-There are no unit tests yet; verify in the page against a running blueprint (`window.spatial` is the app)
-and with `?emulate` for XR paths. A new file must be `git add`ed before `nix build .#dimosApp` sees it.
+`node --test tests/*.test.mjs` runs the unit tests: logic that needs no page (which panels stay, episodes,
+what a launch is told). Everything else is verified in the page against a running blueprint
+(`window.spatial` is the app) and with `?emulate` for XR paths. A new file must be `git add`ed before `nix build .#dimosApp` sees it.
 Vendored code lives in `frontend/vendor/` (three.js 0.180, IWER 2.8 for emulation only); do not edit it.

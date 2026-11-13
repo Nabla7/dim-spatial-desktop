@@ -64,6 +64,9 @@ export const gateway = {
   // The blueprint's config as launched: each module's fields with the values this blueprint gave them.
   blueprintConfig: name => request(`../../gateways/dimos/catalog/blueprints/${segment(name)}/config`, {timeout: 90000}),
 
+  // Where recordings go on this machine: {path}. The gateway is the one that knows.
+  recordings: () => request('../../gateways/dimos/history/recordings'),
+
   // -- the Launcher: it adds the user's saved config to a launch, the gateway keeps none -------------
   launch: (blueprint, config) => request('../@launcher/launch', {method: 'POST', body: config ? {blueprint, config} : {blueprint}, timeout: 30000}),
   relaunch: () => request('../@launcher/relaunch', {method: 'POST', body: {}, timeout: 60000}),

@@ -21,6 +21,7 @@ import {Controls} from './data/controls.js';
 import {Replay} from './data/replay.js';
 import {ReplayScene} from './scene/replay.js';
 import {Scenes} from './data/scenes.js';
+import {Episodes} from './data/episodes.js';
 import {SceneView} from './scene/scenes.js';
 import {openShell} from './panels/shell.js';
 import {openLauncher} from './panels/launcher.js';
@@ -29,6 +30,8 @@ import {openModule} from './panels/module.js';
 import {openKeyboard} from './panels/keyboard.js';
 import {openReplay, watchReplay} from './panels/replay.js';
 import {openScenes, watchScenes} from './panels/scenes.js';
+import {watchScreens} from './panels/screen.js';
+import {watchRecord} from './panels/record.js';
 
 const TABLE = new THREE.Vector3(0, 0.95, 0), FOV = 50;
 
@@ -76,6 +79,7 @@ export class App extends EventTarget {
     this.replayScene = new ReplayScene(this);
     this.scenes = new Scenes(this);
     this.sceneView = new SceneView(this);
+    this.episodes = new Episodes(this);
     // One thing has the table: an episode that opens takes it from a scene.
     this.replay.addEventListener('open', () => this.scenes.close());
     this.pointers.onTablePoint = point => this.controls.place(point);
@@ -85,6 +89,8 @@ export class App extends EventTarget {
     openShell(this);
     watchReplay(this);
     watchScenes(this);
+    watchScreens(this);
+    watchRecord(this);
     this.reopen();
     this.blueprint.start();
     // The left side shows what matters now: the catalog while nothing runs, the modules once something does.
@@ -116,6 +122,7 @@ export class App extends EventTarget {
   holdReload() {
     if (this.xr.presenting) return 'you leave the headset view';
     if (this.controls.armed) return 'the controls are safe again';
+    if (this.episodes.recording) return 'the episode is saved or discarded';
     if (this.agents?.some(agent => agent.busy && agent.session)) return 'the agent has finished';
     if (this.text.active && this.text.value.trim()) return 'you finish typing';
     return null;
@@ -273,12 +280,14 @@ export class App extends EventTarget {
     this.halo.update(dt, now);
     this.dock.update(now, dt);
     this.backdrop.update(time / 1000, this.renderer);
-    if (this.sceneView.walk.on && !xrFrame) this.renderInside(); else this.renderer.render(this.scene, this.camera);
+    if (xrFrame) this.renderer.render(this.scene, this.camera); else this.renderFlat();
   }
 
-  // Inside a scene, things of the scene come nearer to the eye than the panels that ride with the camera.
-  // The panels are drawn after the scene and over it, so a table in front of the viewer never hides one.
-  renderInside() {
+  // On a screen the panels ride with the camera, a metre in front of it, and what is on the table can come
+  // nearer than that: a world zoomed in, a scene at life size. The panels are drawn after the scene and over
+  // it, so nothing of the scene hides one (input/pointers.js gives them the press in the same way). In a
+  // headset the panels stand in the room, where a thing in front of one is in front of it: one pass.
+  renderFlat() {
     const {renderer, scene, camera, dock} = this;
     const shown = dock.hud.visible;
     dock.hud.visible = false;

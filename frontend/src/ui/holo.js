@@ -45,8 +45,12 @@ const wrapCache = new Map();
 export class HoloPanel {
   // width/height in metres. draw(ui, content) lays the panel out; it runs only when the panel is invalidated.
   // bare: no title bar (a toolbar, a status strip); the whole background is then the handle.
-  constructor(theme, {id, title = '', tag = '', width = 0.42, height = 0.5, ppm = 1800, draw, onClose = null, glyph = 'grid', bare = false}) {
+  // kept: no other panel that opens on its side takes its place (the pin in the title bar; the dock applies it).
+  // tools: [{id, label, hint, onClick}] small buttons in the title bar, before the pin.
+  constructor(theme, {id, title = '', tag = '', width = 0.42, height = 0.5, ppm = 1800, draw, onClose = null, glyph = 'grid', bare = false,
+    kept = false, keepable = !bare && !!onClose, tools = []}) {
     this.theme = theme; this.id = id; this.title = title; this.tag = tag; this.glyph = glyph; this.bare = bare;
+    this.kept = kept; this.keepable = keepable; this.tools = tools; this.free = false;
     this.width = width; this.height = height; this.draw = draw; this.onClose = onClose;
     this.dw = width * UNITS_PER_METRE; this.dh = height * UNITS_PER_METRE;
     this.canvas = document.createElement('canvas');
@@ -89,6 +93,7 @@ export class HoloPanel {
       if (slot > 1) break;
       (slot++ ? u.pointerB.value : u.pointerA.value).set(hot.x / this.dw, 1 - hot.y / this.dh, 1);
     }
+    this.onFrame?.(now);
     if (!this.dirty || now - this.lastDraw < this.minInterval || !this.group.visible) return;
     this.dirty = false; this.lastDraw = now;
     const ctx = this.ctx, k = this.canvas.width / this.dw;
@@ -331,7 +336,27 @@ export class Ui {
       this.icon('close', close.cx, close.cy, 22, this.tone(over ? 'danger' : 'muted'));
       this.region(close, {id: '@close', onClick: () => panel.onClose()});
     }
-    if (panel.tag) right -= this.text(panel.tag, right, TITLE_H / 2 + 2, {size: SIZE.xs, family: 'mono', color: this.tone('muted'), align: 'right'}) + 12;
+    // What the pointer is on says what it does, where the tag is.
+    let hint = null;
+    if (panel.keepable) {
+      // The pin: lit while the panel stays, because the user keeps it or put it somewhere by hand.
+      const pin = new Rect(right - 40, 10, 40, 40); right -= 44;
+      const over = this.isHot('@keep'), stays = panel.kept || panel.free;
+      if (stays) { this.chamfer(pin.inset(3), 6); ctx.fillStyle = this.tone('primary', over ? 0.34 : 0.2); ctx.fill(); ctx.strokeStyle = this.tone('primary', 0.8); ctx.lineWidth = 1.2; ctx.stroke(); }
+      this.icon('pin', pin.cx, pin.cy, 20, this.tone(stays ? 'fg' : over ? 'primary' : 'muted'));
+      this.region(pin, {id: '@keep', onClick: () => panel.onKeep?.()});
+      if (over) hint = panel.free ? 'PUT HERE BY HAND · PRESS TO PUT IT BACK' : panel.kept ? 'KEPT · PRESS TO LET GO' : 'KEEP IT OPEN';
+    }
+    for (const tool of [...panel.tools].reverse()) {
+      const width = Math.max(40, this.measure(tool.label, SIZE.xs, 500, 'mono') + 20), box = new Rect(right - width, 12, width, 36); right -= width + 6;
+      const over = this.isHot(`@tool:${tool.id}`);
+      this.chamfer(box, 6); ctx.fillStyle = this.tone('primary', over ? 0.2 : 0.06); ctx.fill(); ctx.strokeStyle = this.tone('primary', over ? 0.9 : 0.4); ctx.lineWidth = 1.2; ctx.stroke();
+      this.text(tool.label, box.cx, box.cy + 1, {size: SIZE.xs, family: 'mono', weight: 500, color: this.tone(over ? 'fg' : 'primary'), align: 'center'});
+      this.region(box, {id: `@tool:${tool.id}`, onClick: () => tool.onClick()});
+      if (over && tool.hint) hint = tool.hint;
+    }
+    const tag = hint || panel.tag;
+    if (tag) right -= this.text(tag, right, TITLE_H / 2 + 2, {size: SIZE.xs, family: 'mono', color: this.tone(hint ? 'primary' : 'muted'), align: 'right'}) + 12;
     this.text(theme.label(panel.title), 66, TITLE_H / 2 + 3, {size: SIZE.sm, family: 'display', color: this.tone('primary'), track: 3, max: right - 70});
     if (panel.busy) {
       const t = (this.now / 900) % 1;

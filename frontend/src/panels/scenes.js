@@ -271,7 +271,7 @@ export function openScenes(app, restore = null) {
 function openDeck(app) {
   const id = 'scenes:deck', scenes = app.scenes, view = app.sceneView, stage = app.stage;
   const panel = app.panel({
-    id, bare: true, width: 1.08, height: DECK_HEIGHT,
+    id, bare: true, width: 1.14, height: DECK_HEIGHT,
     draw(ui, content) {
       if (!scenes.active) { ui.text('No scene is open.', content.cx, content.cy, {size: SIZE.sm, color: ui.tone('muted'), align: 'center'}); return; }
       const top = content.cutTop(44, 8), walking = view.walk.on, ready = scenes.view.state === 'ready';

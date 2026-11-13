@@ -12,13 +12,14 @@ import {openView} from './view.js';
 import {openControl} from './control.js';
 import {openReplay} from './replay.js';
 import {openScenes} from './scenes.js';
+import {openRecord} from './record.js';
 
 const PHASE_TONE = {starting: 'warn', running: 'ok', stopping: 'warn', failed: 'danger', stopped: 'muted'};
 
 export function openShell(app) {
   const blueprint = app.blueprint;
   const head = app.panel({
-    id: 'head', bare: true, width: 1.08, height: 0.05,
+    id: 'head', bare: true, width: 1.14, height: 0.05,
     draw(ui, content) {
       const toast = app.toasts[0];
       const brand = ui.text('DIMOS', content.x + 6, content.cy + 1, {size: SIZE.sm, family: 'display', color: ui.tone('primary'), track: 4});
@@ -54,6 +55,7 @@ export function openShell(app) {
     ['modules', 'MODULES', 'module', () => openModules(app)],
     ['layers', 'LAYERS', 'layers', () => openLayers(app)],
     ['control', 'CONTROL', 'robot', () => openControl(app)],
+    ['record', 'RECORD', 'record', () => openRecord(app)],
     ['agent', 'AGENT', 'agent', () => openAgent(app)],
     ['replay', 'REPLAY', 'film', () => openReplay(app)],
     ['scenes', 'SCENES', 'scene', () => openScenes(app)],
@@ -63,9 +65,9 @@ export function openShell(app) {
   ];
   app.openers = Object.fromEntries(items.map(([id, , , open]) => [id, open]));
   const bar = app.panel({
-    id: 'bar', bare: true, width: 1.08, height: 0.068,
+    id: 'bar', bare: true, width: 1.14, height: 0.068,
     draw(ui, content) {
-      const xr = app.xr, right = content.cutRight(280, 16);
+      const xr = app.xr, right = content.cutRight(240, 16);
       const cells = content.cols(items.length, 8);
       items.forEach(([id, label, icon, open], index) => {
         const cell = cells[index], on = app.dock.has(id), hot = ui.isHot(`bar:${id}`);
@@ -74,7 +76,9 @@ export function openShell(app) {
         ui.ctx.strokeStyle = ui.tone('primary', on ? 1 : hot ? 0.8 : 0.28); ui.ctx.lineWidth = 1.4; ui.ctx.stroke();
         if (on) { ui.ctx.fillStyle = ui.tone('primary'); ui.ctx.fillRect(cell.x + 10, cell.b - 3, cell.w - 20, 3); }
         ui.icon(icon, cell.cx, cell.y + 30, 26, ui.tone(on || hot ? 'fg' : 'primary'));
-        ui.text(label, cell.cx, cell.b - 18, {size: 12.5, family: 'display', color: ui.tone(on || hot ? 'fg' : 'muted'), align: 'center', track: 1.5, max: cell.w - 6});
+        ui.text(label, cell.cx, cell.b - 18, {size: 12.5, family: 'display', color: ui.tone(on || hot ? 'fg' : 'muted'), align: 'center', track: 1.5, max: cell.w - 2});
+        // An episode that is recording shows here too, so it is seen with its deck put away.
+        if (id === 'record' && app.episodes.recording) ui.lamp(cell.r - 14, cell.y + 14, 'danger', true);
         ui.region(cell, {id: `bar:${id}`, onClick: open});
       });
       // The headset corner: enter, leave, or the reason there is nothing to enter.
@@ -94,5 +98,6 @@ export function openShell(app) {
   });
   app.dock.addEventListener('change', () => bar.invalidate());
   app.xr.addEventListener('change', () => bar.invalidate());
+  app.episodes.addEventListener('change', () => bar.invalidate());
   app.dock.open(bar, 'bar');
 }

@@ -1,0 +1,443 @@
+{
+ "blueprint": "r1pro-openarm-joylo-collect",
+ "modules": [
+  {
+   "name": "recorder",
+   "class": "dimos.imitation.collection.recorder.CollectionModule",
+   "streams": [
+    {
+     "name": "tf",
+     "type": "dimos.msgs.tf2_msgs.TFMessage.TFMessage",
+     "direction": "in",
+     "wire": "tf",
+     "topic": "/tf"
+    },
+    {
+     "name": "status",
+     "type": "dimos.msgs.std_msgs.String.String",
+     "direction": "in",
+     "wire": "status",
+     "topic": "/status"
+    },
+    {
+     "name": "coordinator_joint_state",
+     "type": "dimos.msgs.sensor_msgs.JointState.JointState",
+     "direction": "in",
+     "wire": "coordinator_joint_state",
+     "topic": "/coordinator_joint_state"
+    },
+    {
+     "name": "color_image",
+     "type": "dimos.msgs.sensor_msgs.CompressedImage.CompressedImage",
+     "direction": "in",
+     "wire": "color_image",
+     "topic": "/color_image"
+    },
+    {
+     "name": "left_wrist",
+     "type": "dimos.msgs.sensor_msgs.CompressedImage.CompressedImage",
+     "direction": "in",
+     "wire": "left_wrist",
+     "topic": "/left_wrist"
+    },
+    {
+     "name": "right_wrist",
+     "type": "dimos.msgs.sensor_msgs.CompressedImage.CompressedImage",
+     "direction": "in",
+     "wire": "right_wrist",
+     "topic": "/right_wrist"
+    },
+    {
+     "name": "coordinator_joint_command",
+     "type": "dimos.msgs.sensor_msgs.JointState.JointState",
+     "direction": "in",
+     "wire": "coordinator_joint_command",
+     "topic": "/coordinator_joint_command"
+    },
+    {
+     "name": "coordinator_joint_velocity",
+     "type": "dimos.msgs.sensor_msgs.JointState.JointState",
+     "direction": "in",
+     "wire": "coordinator_joint_velocity",
+     "topic": "/coordinator_joint_velocity"
+    },
+    {
+     "name": "motion_settings",
+     "type": "dimos.msgs.std_msgs.String.String",
+     "direction": "in",
+     "wire": "motion_settings",
+     "topic": "/motion_settings"
+    }
+   ],
+   "rpcs": []
+  },
+  {
+   "name": "episodes",
+   "class": "dimos.imitation.collection.episode_monitor.EpisodeMonitorModule",
+   "streams": [
+    {
+     "name": "teleop_buttons",
+     "type": "dimos.teleop.webxr.controller_types.Buttons",
+     "direction": "in",
+     "wire": "teleop_buttons",
+     "topic": "/teleop_buttons"
+    },
+    {
+     "name": "status",
+     "type": "dimos.msgs.std_msgs.String.String",
+     "direction": "out",
+     "wire": "status",
+     "topic": "/status"
+    }
+   ],
+   "rpcs": [
+    {
+     "name": "command",
+     "params": [
+      {
+       "name": "event",
+       "type": "EpisodeCommand",
+       "default": null,
+       "required": true,
+       "choices": null
+      }
+     ],
+     "return_type": "EpisodeStatus"
+    },
+    {
+     "name": "get_status",
+     "params": [],
+     "return_type": "EpisodeStatus"
+    }
+   ]
+  },
+  {
+   "name": "ControlCoordinator",
+   "class": "dimos.robot.galaxea.r1pro.joylo_coordinator.R1ProJoyloCoordinator",
+   "streams": [
+    {
+     "name": "coordinator_joint_state",
+     "type": "dimos.msgs.sensor_msgs.JointState.JointState",
+     "direction": "out",
+     "wire": "coordinator_joint_state",
+     "topic": "/coordinator_joint_state"
+    },
+    {
+     "name": "coordinator_joint_command",
+     "type": "dimos.msgs.sensor_msgs.JointState.JointState",
+     "direction": "out",
+     "wire": "coordinator_joint_command",
+     "topic": "/coordinator_joint_command"
+    },
+    {
+     "name": "coordinator_joint_velocity",
+     "type": "dimos.msgs.sensor_msgs.JointState.JointState",
+     "direction": "out",
+     "wire": "coordinator_joint_velocity",
+     "topic": "/coordinator_joint_velocity"
+    },
+    {
+     "name": "motion_settings",
+     "type": "dimos.msgs.std_msgs.String.String",
+     "direction": "out",
+     "wire": "motion_settings",
+     "topic": "/motion_settings"
+    },
+    {
+     "name": "joint_command",
+     "type": "dimos.msgs.sensor_msgs.JointState.JointState",
+     "direction": "in",
+     "wire": "joint_command",
+     "topic": "/joint_command"
+    },
+    {
+     "name": "twist_command",
+     "type": "dimos.msgs.geometry_msgs.Twist.Twist",
+     "direction": "in",
+     "wire": "cmd_vel",
+     "topic": "/r1pro/joylo/cmd_vel"
+    },
+    {
+     "name": "gripper_command",
+     "type": "dimos.msgs.std_msgs.Float32.Float32",
+     "direction": "in",
+     "wire": "gripper_command",
+     "topic": "/gripper_command"
+    },
+    {
+     "name": "joylo_twist_command",
+     "type": "dimos.msgs.geometry_msgs.Twist.Twist",
+     "direction": "in",
+     "wire": "joylo_cmd_vel",
+     "topic": "/joylo_cmd_vel"
+    },
+    {
+     "name": "leader_joint_command",
+     "type": "dimos.msgs.sensor_msgs.JointState.JointState",
+     "direction": "in",
+     "wire": "leader_joint_command",
+     "topic": "/r1pro/joylo/leader_joint_command"
+    },
+    {
+     "name": "left_gripper_command",
+     "type": "dimos.msgs.std_msgs.Float32.Float32",
+     "direction": "in",
+     "wire": "left_gripper_command",
+     "topic": "/r1pro/joylo/left_gripper_command"
+    },
+    {
+     "name": "right_gripper_command",
+     "type": "dimos.msgs.std_msgs.Float32.Float32",
+     "direction": "in",
+     "wire": "right_gripper_command",
+     "topic": "/r1pro/joylo/right_gripper_command"
+    },
+    {
+     "name": "r1pro_position_command",
+     "type": "dimos.msgs.sensor_msgs.JointState.JointState",
+     "direction": "out",
+     "wire": "r1pro_position_command",
+     "topic": "/r1pro/joylo/r1pro_position_command"
+    },
+    {
+     "name": "r1pro_velocity_command",
+     "type": "dimos.msgs.sensor_msgs.JointState.JointState",
+     "direction": "out",
+     "wire": "r1pro_velocity_command",
+     "topic": "/r1pro/joylo/r1pro_velocity_command"
+    },
+    {
+     "name": "r1pro_joint_state",
+     "type": "dimos.msgs.sensor_msgs.JointState.JointState",
+     "direction": "in",
+     "wire": "robot_feedback",
+     "topic": "/r1pro/joylo/robot_feedback"
+    }
+   ],
+   "rpcs": [
+    {
+     "name": "add_hardware",
+     "params": [
+      {
+       "name": "adapter",
+       "type": "dimos.hardware.manipulators.spec.ManipulatorAdapter | dimos.hardware.drive_trains.spec.TwistBaseAdapter | dimos.hardware.whole_body.spec.WholeBodyAdapter",
+       "default": null,
+       "required": true,
+       "choices": null
+      },
+      {
+       "name": "component",
+       "type": "HardwareComponent",
+       "default": null,
+       "required": true,
+       "choices": null
+      }
+     ],
+     "return_type": "bool"
+    },
+    {
+     "name": "add_task",
+     "params": [
+      {
+       "name": "task",
+       "type": "ControlTask",
+       "default": null,
+       "required": true,
+       "choices": null
+      },
+      {
+       "name": "task_type",
+       "type": "str | None",
+       "default": "None",
+       "required": false,
+       "choices": null
+      },
+      {
+       "name": "stream_bind",
+       "type": "dict[str, str] | None",
+       "default": "None",
+       "required": false,
+       "choices": null
+      }
+     ],
+     "return_type": "bool"
+    },
+    {
+     "name": "cancel_trajectory",
+     "params": [],
+     "return_type": "TrajectoryCancellationResult"
+    }
+   ]
+  },
+  {
+   "name": "leaderteleopmodule",
+   "class": "dimos.teleop.leader.module.LeaderTeleopModule",
+   "streams": [
+    {
+     "name": "leader_joint_command",
+     "type": "dimos.msgs.sensor_msgs.JointState.JointState",
+     "direction": "out",
+     "wire": "leader_readings",
+     "topic": "/r1pro/joylo/leader_readings"
+    },
+    {
+     "name": "left_gripper_command",
+     "type": "dimos.msgs.std_msgs.Float32.Float32",
+     "direction": "out",
+     "wire": "unused_leader_left_gripper",
+     "topic": "/unused_leader_left_gripper"
+    },
+    {
+     "name": "right_gripper_command",
+     "type": "dimos.msgs.std_msgs.Float32.Float32",
+     "direction": "out",
+     "wire": "unused_leader_right_gripper",
+     "topic": "/unused_leader_right_gripper"
+    },
+    {
+     "name": "teleop_buttons",
+     "type": "dimos.teleop.webxr.controller_types.Buttons",
+     "direction": "in",
+     "wire": "unused_leader_buttons",
+     "topic": "/unused_leader_buttons"
+    }
+   ],
+   "rpcs": [
+    {
+     "name": "get_authority",
+     "params": [],
+     "return_type": "bool"
+    },
+    {
+     "name": "set_authority",
+     "params": [
+      {
+       "name": "active",
+       "type": "bool",
+       "default": null,
+       "required": true,
+       "choices": null
+      }
+     ],
+     "return_type": "bool"
+    }
+   ]
+  }
+ ],
+ "config": {
+  "name": "r1pro-openarm-joylo-collect",
+  "modules": {
+   "recorder": {
+    "class": "dimos.imitation.collection.recorder.CollectionModule",
+    "args": {
+     "recording": {
+      "type": "pathlib.Path",
+      "default": null,
+      "description": null,
+      "required": true,
+      "secret": false,
+      "base": false,
+      "json_compatible": true
+     },
+     "format": {
+      "type": "Literal['mcap', 'sqlite']",
+      "default": "mcap",
+      "description": null,
+      "required": false,
+      "secret": false,
+      "base": false,
+      "json_compatible": true,
+      "choices": [
+       "mcap",
+       "sqlite"
+      ]
+     },
+     "on_existing": {
+      "type": "Literal[<OnExisting.ERROR: 'error'>]",
+      "default": "error",
+      "description": "Collection requires a new recording directory; existing files are errors.",
+      "required": false,
+      "secret": false,
+      "base": false,
+      "json_compatible": true,
+      "choices": [
+       "error"
+      ]
+     },
+     "executable": {
+      "type": "str",
+      "default": "result/bin/dimos-memory-recorder",
+      "description": null,
+      "required": false,
+      "secret": false,
+      "base": false,
+      "json_compatible": true
+     },
+     "frame_id": {
+      "type": "str | None",
+      "default": null,
+      "description": null,
+      "required": false,
+      "secret": false,
+      "base": true,
+      "json_compatible": true
+     }
+    }
+   },
+   "episodes": {
+    "class": "dimos.imitation.collection.episode_monitor.EpisodeMonitorModule",
+    "args": {
+     "task": {
+      "type": "str",
+      "default": null,
+      "description": null,
+      "required": true,
+      "secret": false,
+      "base": false,
+      "json_compatible": true
+     },
+     "button_map": {
+      "type": "dict[Literal['start', 'save', 'discard', 'toggle'], str]",
+      "default": {
+       "toggle": "B",
+       "discard": "Y"
+      },
+      "description": null,
+      "required": false,
+      "secret": false,
+      "base": false,
+      "json_compatible": true,
+      "value": {}
+     },
+     "frame_id": {
+      "type": "str | None",
+      "default": null,
+      "description": null,
+      "required": false,
+      "secret": false,
+      "base": true,
+      "json_compatible": true
+     }
+    }
+   },
+   "leaderteleopmodule": {
+    "class": "dimos.teleop.leader.module.LeaderTeleopModule",
+    "args": {
+     "mappings": {
+      "type": "dict[Literal['left', 'right'], dimos.teleop.leader.mapping.SideMapping]",
+      "default": null,
+      "description": null,
+      "required": true,
+      "secret": false,
+      "base": false,
+      "json_compatible": false,
+      "value": {
+       "left": "joints=(JointMapping(motor='joint_1', joint='r1pro/left_arm_joint1', lower=-6.283185307179586, upper=6.283185307179586, scale=1.0, offset=0.0), JointMapping(motor='joint_2', joint='r1pro/left_arm_joint2', lower=-6.283185307179586, upper=6.283185307179586, scale=1.0, offset=0.0), JointMapping(motor='joint_3', joint='r1pro/left_arm_joint3', lower=-6.283185307179586, upper=6.283185307179586, scale=1.0, offset=0.0), JointMapping(motor='joint_4', joint='r1pro/left_arm_joint4', lower=-6.283185307179586, upper=6.283185307179586, scale=1.0, offset=0.0), JointMapping(motor='joint_5', joint='r1pro/left_arm_joint5', lower=-6.283185307179586, upper=6.283185307179586, scale=1.0, offset=0.0), JointMapping(motor='joint_6', joint='r1pro/left_arm_joint6', lower=-6.283185307179586, upper=6.283185307179586, scale=1.0, offset=0.0), JointMapping(motor='joint_7', joint='r1pro/left_arm_joint7', lower=-6.283185307179586, upper=6.283185307179586, scale=1.0, offset=0.0)) gripper=None",
+       "right": "joints=(JointMapping(motor='joint_1', joint='r1pro/right_arm_joint1', lower=-6.283185307179586, upper=6.283185307179586, scale=1.0, offset=0.0), JointMapping(motor='joint_2', joint='r1pro/right_arm_joint2', lower=-6.283185307179586, upper=6.283185307179586, scale=1.0, offset=0.0), JointMapping(motor='joint_3', joint='r1pro/right_arm_joint3', lower=-6.283185307179586, upper=6.283185307179586, scale=1.0, offset=0.0), JointMapping(motor='joint_4', joint='r1pro/right_arm_joint4', lower=-6.283185307179586, upper=6.283185307179586, scale=1.0, offset=0.0), JointMapping(motor='joint_5', joint='r1pro/right_arm_joint5', lower=-6.283185307179586, upper=6.283185307179586, scale=1.0, offset=0.0), JointMapping(motor='joint_6', joint='r1pro/right_arm_joint6', lower=-6.283185307179586, upper=6.283185307179586, scale=1.0, offset=0.0), JointMapping(motor='joint_7', joint='r1pro/right_arm_joint7', lower=-6.283185307179586, upper=6.283185307179586, scale=1.0, offset=0.0)) gripper=None"
+      }
+     }
+    }
+   }
+  }
+ }
+}

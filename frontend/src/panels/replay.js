@@ -295,7 +295,7 @@ function drawChart(ui, inner, y, chart) {
 function openDeck(app) {
   const id = 'replay:deck', replay = app.replay, scene = app.replayScene;
   const panel = app.panel({
-    id, bare: true, width: 1.08, height: DECK_HEIGHT,
+    id, bare: true, width: 1.14, height: DECK_HEIGHT,
     draw(ui, content) {
       const recording = replay.recording;
       if (!recording) { ui.text(replay.loading ? 'Reading the episode…' : 'No episode is open.', content.cx, content.cy, {size: SIZE.sm, color: ui.tone('muted'), align: 'center'}); return; }

@@ -29,6 +29,7 @@ uses:
     - GET catalog/blueprints
     - GET catalog/blueprints/{name}
     - GET catalog/blueprints/{name}/config
+    - GET history/recordings
     - GET msgs.js
   "@desktop-gateway":
     - GET topics/rates

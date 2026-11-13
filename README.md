@@ -11,6 +11,8 @@ every panel and every hologram is built from what the dimos gateway says is runn
 ## What it shows
 
 - **Blueprint**: the catalog, launch, stop and restart (through Desktop's Launcher, so a launch gets your saved config).
+  What a blueprint cannot start without (a module's required setting that the blueprint does not give)
+  is asked for on its card and sent with the launch.
 - **Modules**: every module instance of the run, as a list and as a ring of plates around the table. An arc
   joins two modules that share a topic; pulses run from writer to reader at the topic's measured rate.
 - **A module**: its docstring, process and CPU, its streams with live rates, and its RPCs (below).
@@ -27,7 +29,9 @@ every panel and every hologram is built from what the dimos gateway says is runn
   | `nav_msgs.Path`, `nav_msgs.OccupancyGrid` | a line, a textured plane |
   | `tf2_msgs.TFMessage` | frame axes |
 
+  A camera's row has **SCREEN**: the camera as a screen of its own (below).
 - **Control**: the robot's controls, found from the blueprint (below).
+- **Record**: episodes for training, when the blueprint records them: start, save, discard (below).
 - **Agent**: a chat with Claude Code or Codex on this machine, or with the agent of an agentic blueprint (below).
 - **Replay**: recorded episodes instead of the live blueprint: the world, the cameras and every signal at a
   playhead you can scrub, with checks of the episode and of the whole dataset (below).
@@ -35,6 +39,23 @@ every panel and every hologram is built from what the dimos gateway says is runn
 
 Desktop is told what the app shows, so an agent that asks Desktop can know what you are looking at, and
 `POST /gateways/desktop/views/<app>/highlight {"kind": "module", "id": "<module id>"}` flashes that module.
+
+## Panels that stay
+
+On a screen, each side holds one tool: the next panel you open there takes its place. Three things stay:
+
+- **A panel you keep.** Every panel has a pin in its title bar. A kept panel is not given up for another:
+  the next panel stands beside it. The choice is remembered for that panel.
+- **A panel you put somewhere.** Drag a panel by its title and it stays where you put it. Its pin lights;
+  press the pin to put the panel back in its column.
+- **A camera's screen.** SCREEN in **Layers** opens a camera as a panel that shows the video itself, every
+  frame the stream has. It starts kept, so **Control** opens beside it and not in its place. The button in
+  its title bar steps through four sizes (S, M, L, XL). The screens you keep for a blueprint open again
+  when that blueprint runs again; close one, or let go of its pin, and it does not.
+
+On a screen the panels are always in front of what is on the table, and they take the press. A world
+zoomed in, or a scene at life size, comes nearer to the eye than the panels do, and no longer covers
+them. In a headset the panels stand in the room, and what is in front of a panel is in front of it.
 
 ## Calling an RPC
 
@@ -87,6 +108,29 @@ sends zero on every drive stream. Closing the panel makes the controls safe.
 One app at a time may command a robot (the gateway's lease). The first command takes it, also from
 another app such as Controller; if another app takes it back, the panel says so and your next press
 takes it again.
+
+## Recording episodes
+
+![An episode being recorded: the deck, what the recorder reads, and a camera's screen](docs/images/record.png)
+
+Some blueprints record episodes for training: a person (or a policy) works the robot, and each take is
+saved or discarded. dimos gives such a blueprint an episode control, and the page finds it the way dimos's
+own terminal interface does: by what the module answers (`get_status()` and `command(event)` with an
+episode status), not by its name.
+
+- **The deck** comes by itself when the running blueprint has an episode control: READY or RECORDING with
+  the time, the task, how many are saved and discarded, and **START**, **SAVE**, **DISCARD**. Keys do the
+  same while the deck is there: `R` starts an episode and saves it, `Backspace` discards it.
+- **RECORD** opens the panel: what an episode holds (each stream the recorder reads, who writes it and
+  how fast it is arriving now) and the episodes of this session with how long each ran. A stream with
+  nothing arriving is said there and on the deck before you start, because it is a hole in every episode.
+- **Before a run**, RECORD lists the blueprints that record. Its card in **Blueprint** asks what the
+  episodes are of (the task) and where they go, and proposes a new folder under Desktop's recordings
+  folder, named after the blueprint and the time.
+- A page that is recording does not reload itself, and **Blueprint** says so before a stop: an episode
+  that is recording when the blueprint stops is neither saved nor discarded.
+
+An episode starts and ends only on a press. The page does not write a recording: the blueprint's recorder does.
 
 ## Agents
 
@@ -231,7 +275,7 @@ app's data folder (`scenes/`, with the views of the six revisions used last).
 | | screen | headset |
 |---|---|---|
 | point and press | mouse | controller ray + trigger, or hand ray + pinch |
-| move a panel | drag its title | grip on the panel (stick reels it in and out) |
+| move a panel | drag its title (its pin puts it back) | grip on the panel (stick reels it in and out) |
 | orbit | left drag on empty space | walk |
 | slide the world | right drag | press or grip in empty space and move the hand |
 | scale and turn the world | pinch on a trackpad, ctrl + wheel | two hands; right stick |
@@ -271,6 +315,7 @@ This was developed against an emulated headset (see below). It has not been run 
 dimos-desktop app check .                 # every gateway call and route is declared in dimos.yaml
 deno check server/main.ts
 for f in $(find frontend/src -name '*.js'); do node --check "$f"; done
+node --test tests/*.test.mjs              # what needs no page: which panels stay, episodes, what a launch is told
 ```
 
 Append `?emulate` to the URL for an in-page WebXR runtime ([IWER](https://github.com/meta-quest/immersive-web-emulation-runtime)):
@@ -283,6 +328,13 @@ AGENTS.md says how the code is laid out and where an addition goes.
 - Controls are found by type and by name. A stream or an RPC that does not follow the usual shapes is not
   offered; call it from its module's panel.
 - An RPC that takes a Python object cannot be called from the page.
+- Episodes are found by dimos's episode control (`EpisodeControlSpec`). A blueprint that records in another
+  way has no deck. Where a recorder writes is shown only when the launch named the folder. A recorded
+  session is not read by Replay (below). Policy rollout, which dimos's terminal interface has beside the
+  episodes, is not here.
+- The page asks for a required setting only when dimos marks it as required. A setting a module checks
+  itself when it starts (a serial port, say) is found from the failed launch's last error.
+- Many kept screens and a tool do not fit a small window: the columns then cross the table.
 - The agents need `claude` or `codex` installed and logged in on the machine that runs Desktop.
 - Replay reads one format: learning episodes (`dimos.learning.frame.v1` frames in an MCAP beside a
   `metadata.json`). Robot recordings from Controller's recorder (MCAP of dimos messages, `.db`) are not read.

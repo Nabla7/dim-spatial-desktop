@@ -20,7 +20,6 @@ export class Pointers {
     this.sticks = {left: [0, 0], right: [0, 0]};
     this.onEmptyClick = null;
     this.onWorldClick = null;        // a press on the scene that did not move it: (pointer) => void
-    this.panelsFirst = false;        // a panel is hit before anything of the scene, however near that is
     this.bindMouse();
   }
 
@@ -46,7 +45,10 @@ export class Pointers {
     if (this.picks.size) {
       const visible = [...this.picks.keys()].filter(object => object.visible && object.parent);
       const hit = this.raycaster.intersectObjects(visible, true)[0];
-      if (hit && (!best || (!this.panelsFirst && hit.distance < best.distance - 0.01))) {
+      // On a screen a panel is drawn over the scene, so it is hit before anything of the scene, however near
+      // that is. In a room the nearer of the two is the one in front.
+      const panelsFirst = this.dock.mode === 'hud';
+      if (hit && (!best || (!panelsFirst && hit.distance < best.distance - 0.01))) {
         let object = hit.object;
         while (object && !this.picks.has(object)) object = object.parent;
         // Many things drawn as one (an instanced mesh) say which of them was hit.
@@ -123,6 +125,7 @@ export class Pointers {
 
   movePanelGrab(pointer, dt) {
     const grab = pointer.panelGrab, group = grab.panel.group;
+    _a.copy(group.position);
     if (pointer.kind === 'mouse') {
       // Intersect the cursor ray with the plane the panel slides in (HUD space, constant depth).
       const origin = group.parent.worldToLocal(pointer.ray.origin.clone());
@@ -139,12 +142,15 @@ export class Pointers {
       _matrix.premultiply(_inverse.copy(group.parent.matrixWorld).invert()).decompose(_position, _quaternion, _scale);
       group.position.copy(_position); group.quaternion.copy(_quaternion);
     }
+    // A press on a title bar that moves nothing is not a move: the panel stays in the dock's arrangement.
+    if (!grab.moved && _a.distanceTo(group.position) < 0.002) return;
+    grab.moved = true;
     this.dock.release(grab.panel);
   }
 
   endPanelGrab(pointer) {
     const grab = pointer.panelGrab;
-    grab.entry.held = false; this.dock.release(grab.panel);
+    grab.entry.held = false; if (grab.moved) this.dock.release(grab.panel);
     grab.panel.pointerUp(pointer.id, null, null);
     pointer.panelGrab = null;
   }

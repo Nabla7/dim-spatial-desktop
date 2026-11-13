@@ -1,9 +1,13 @@
 // Where panels live. On a flat screen they ride with the camera as a heads-up display, so orbiting
 // the table never loses them. In a headset they stand in the room on an arc around the viewer.
 // A panel the user has dragged stays where it was put; the rest are arranged by slot.
+// On a screen a side holds one tool at a time: the next one opened takes its place. A panel the user
+// keeps (the pin in its title bar) is not given up for another; the other then stands beside it (ui/flow.js).
 import * as THREE from 'three';
+import {flow} from './flow.js';
 
 const HUD_DISTANCE = 1.0, GAP = 0.016, MARGIN = 0.022;
+const KEPT = 'spatial.kept';   // which panels the user pinned or let go, by panel id
 // Arc slots for the room: azimuth (degrees, + is right), radius, and whether it stacks downward from eye height.
 const ARC = {
   left: {azimuth: -44, radius: 1.05}, right: {azimuth: 44, radius: 1.05},
@@ -19,6 +23,7 @@ export class Dock extends EventTarget {
     this.entries = new Map(); this.mode = 'hud'; this.sequence = 0;
     this.anchor = {position: new THREE.Vector3(0, 1.5, 0), yaw: 0};
     this.inset = {top: 0, bottom: 0}; // CSS pixels of the window that Desktop's shell covers
+    try { this.keeps = JSON.parse(localStorage.getItem(KEPT) || '{}'); } catch { this.keeps = {}; }
   }
 
   get panels() { return [...this.entries.values()].map(entry => entry.panel); }
@@ -33,6 +38,8 @@ export class Dock extends EventTarget {
     this.entries.set(panel.id, entry);
     (this.mode === 'hud' ? this.hud : this.room).add(panel.group);
     panel.opened = performance.now(); panel.closing = 0;
+    // What the user chose for this panel before holds; else the panel's own start (a camera screen starts kept).
+    if (panel.keepable) { panel.kept = this.keeps[panel.id] ?? panel.kept; panel.onKeep = () => this.pin(panel.id); }
     this.layout();
     this.dispatchEvent(new Event('change'));
     return panel;
@@ -40,13 +47,51 @@ export class Dock extends EventTarget {
 
   close(id) { this.entries.get(id)?.panel.close(); this.layout(); this.dispatchEvent(new Event('change')); }
 
+  // The pin in a title bar. A panel the user put somewhere by hand goes back to its column; any other is
+  // kept, or let go.
+  pin(id) {
+    const entry = this.entries.get(id);
+    if (!entry) return;
+    if (!entry.free) { this.keep(id, !entry.panel.kept); return; }
+    entry.free = entry.panel.free = false; entry.panel.invalidate();
+    this.layout();
+    this.dispatchEvent(new Event('change'));
+  }
+
+  // Keep a panel: no other panel that opens on its side takes its place. The choice is remembered for the panel.
+  keep(id, on) {
+    const panel = this.get(id);
+    if (!panel?.keepable) return;
+    panel.kept = !!on; panel.invalidate();
+    this.keeps[id] = panel.kept;
+    try { localStorage.setItem(KEPT, JSON.stringify(this.keeps)); } catch { /* private mode: the choice lasts as long as the page */ }
+    panel.onKept?.(panel.kept);
+    this.layout();
+    this.dispatchEvent(new Event('change'));
+  }
+
+  // The same panel made again (a camera screen at another size): it takes the place the old one had, its
+  // turn in the column and where the user put it, with no jump.
+  swap(panel) {
+    const entry = this.entries.get(panel.id), old = entry?.panel;
+    if (!entry || old.closing) return this.open(panel, entry?.slot);
+    panel.kept = old.kept; panel.free = old.free; panel.onKeep = old.onKeep;
+    panel.group.position.copy(old.group.position); panel.group.quaternion.copy(old.group.quaternion);
+    panel.opened = old.opened; panel.closing = 0;
+    entry.panel = panel; old.group.parent.add(panel.group);
+    old.dispose();
+    this.layout();
+    this.dispatchEvent(new Event('change'));
+    return panel;
+  }
+
   // The viewer's place in the room: panels and the table are arranged around it.
-  setAnchor(position, yaw) { this.anchor.position.copy(position); this.anchor.yaw = yaw; for (const entry of this.entries.values()) entry.free = false; this.layout(true); }
+  setAnchor(position, yaw) { this.anchor.position.copy(position); this.anchor.yaw = yaw; for (const entry of this.entries.values()) entry.free = entry.panel.free = false; this.layout(true); }
 
   setMode(mode) {
     if (mode === this.mode) return;
     this.mode = mode;
-    for (const entry of this.entries.values()) { (mode === 'hud' ? this.hud : this.room).add(entry.panel.group); entry.free = false; entry.placed = false; }
+    for (const entry of this.entries.values()) { (mode === 'hud' ? this.hud : this.room).add(entry.panel.group); entry.free = entry.panel.free = false; entry.placed = false; }
     this.layout(true);
   }
 
@@ -76,39 +121,51 @@ export class Dock extends EventTarget {
     const top = height / 2 - MARGIN - this.inset.top * perPixel, bottom = -height / 2 + MARGIN + this.inset.bottom * perPixel;
     const barHeight = live.filter(e => e.slot === 'bar').reduce((h, e) => Math.max(h, e.panel.height), 0);
     const headHeight = live.filter(e => e.slot === 'head').reduce((h, e) => Math.max(h, e.panel.height), 0);
-    const deckHeight = live.filter(e => e.slot === 'deck').reduce((h, e) => Math.max(h, e.panel.height), 0);
-    const low = (barHeight ? barHeight + GAP : 0) + (deckHeight ? deckHeight + GAP : 0);
+    // Decks stand on one another above the bar (an episode's controls under a scene's, say).
+    const decks = live.filter(e => e.slot === 'deck'), deckHeight = decks.reduce((h, e) => h + e.panel.height + GAP, 0);
+    const low = (barHeight ? barHeight + GAP : 0) + deckHeight;
     // Side columns run from under the status strip to above the command bar.
     const columnTop = top - (headHeight ? headHeight + GAP : 0), available = columnTop - bottom - low;
-    // Columns: left/farLeft stack on the left edge, right/farRight on the right edge.
-    const columns = {left: [], right: []};
+    // left/farLeft stand at the left edge, right/farRight at the right edge. A panel the user dragged is where
+    // it was put: it takes no room in a column and no other panel closes it.
+    const sides = {left: [], right: []};
     for (const entry of live) {
-      if (['bar', 'head', 'keys', 'deck'].includes(entry.slot)) continue;
-      columns[entry.slot.toLowerCase().includes('left') ? 'left' : 'right'].push(entry);
+      if (['bar', 'head', 'keys', 'deck'].includes(entry.slot) || entry.free) continue;
+      sides[entry.slot.toLowerCase().includes('left') ? 'left' : 'right'].push(entry);
     }
-    // A window too small for a column closes that column's oldest panels rather than shrinking text.
-    for (const column of Object.values(columns)) {
-      let total = column.reduce((sum, e) => sum + e.panel.height + GAP, -GAP);
-      while (column.length > 1 && total > available) { const oldest = column.shift(); total -= oldest.panel.height + GAP; oldest.panel.close(); }
-    }
-    for (const [side, column] of Object.entries(columns)) {
+    for (const [side, entries] of Object.entries(sides)) {
       const sign = side === 'left' ? -1 : 1;
-      let y = columnTop;
-      for (const entry of column) {
-        const panel = entry.panel;
-        if (!entry.free) {
-          entry.position.set(sign * (width / 2 - MARGIN - panel.width / 2), y - panel.height / 2, -HUD_DISTANCE);
-          entry.quaternion.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, -sign * THREE.MathUtils.degToRad(7));
+      const {columns, closed} = flow(entries.map(entry => ({entry, height: entry.panel.height, kept: !!entry.panel.kept, order: entry.order})), available, GAP);
+      for (const {entry} of closed) entry.panel.close();
+      // Where the next column's outer edge may be, as seen on the screen (metres at the HUD's distance).
+      let bound = width / 2 - MARGIN;
+      columns.forEach((column, index) => {
+        let inner = bound, y = columnTop;
+        for (const {entry} of column) {
+          const panel = entry.panel, half = panel.width / 2;
+          // The column at the edge is turned toward the viewer, a wide panel less; the ones beside it hardly.
+          const turn = THREE.MathUtils.degToRad(index ? 2.5 : 7 * Math.min(1, 0.46 / panel.width)), near = half * Math.sin(turn) / HUD_DISTANCE;
+          // A turned panel's outer edge is nearer the eye and so looks further out: the panel is put where
+          // that edge is seen at the bound, and its inner edge (further away, so further in) bounds the next column.
+          const centre = bound * (1 - near) - half * Math.cos(turn);
+          entry.position.set(sign * centre, y - panel.height / 2, -HUD_DISTANCE);
+          entry.quaternion.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, -sign * turn);
+          inner = Math.min(inner, (centre - half * Math.cos(turn)) / (1 + near));
+          y -= panel.height + GAP;
         }
-        y -= panel.height + GAP;
-      }
+        bound = inner - GAP * 1.5;
+      });
+    }
+    let deckBase = bottom + (barHeight ? barHeight + GAP : 0);
+    for (const entry of decks) {
+      // A little nearer than the columns: a side panel that was open before the deck came must not cover it.
+      if (!entry.free) { entry.position.set(0, deckBase + entry.panel.height / 2, -HUD_DISTANCE + 0.03); entry.quaternion.identity(); }
+      deckBase += entry.panel.height + GAP;
     }
     for (const entry of live) {
       if (entry.free) continue;
       if (entry.slot === 'bar') { entry.position.set(0, bottom + entry.panel.height / 2, -HUD_DISTANCE); entry.quaternion.identity(); }
       if (entry.slot === 'head') { entry.position.set(0, top - entry.panel.height / 2, -HUD_DISTANCE); entry.quaternion.identity(); }
-      // A little nearer than the columns: a side panel that was open before the deck came must not cover it.
-      if (entry.slot === 'deck') { entry.position.set(0, bottom + (barHeight ? barHeight + GAP : 0) + entry.panel.height / 2, -HUD_DISTANCE + 0.03); entry.quaternion.identity(); }
       if (entry.slot === 'keys') { entry.position.set(0, bottom + low + entry.panel.height / 2, -HUD_DISTANCE); entry.quaternion.identity(); }
     }
   }
@@ -121,12 +178,20 @@ export class Dock extends EventTarget {
       entry.quaternion.setFromEuler(new THREE.Euler(pitch, a, 0, 'YXZ'));
     };
     const columns = {};
+    // Decks lie one behind the other up their own slope (0.75 rad back from upright).
+    let edge = 0, first = null;
     for (const entry of live) {
+      if (entry.slot === 'deck') {
+        first ??= entry.panel.height / 2;
+        const along = edge + entry.panel.height / 2 - first;
+        if (!entry.free) place(entry, 0, 0.5 + along * Math.sin(0.75), eye - 0.455 + along * Math.cos(0.75), -0.75);
+        edge += entry.panel.height + GAP;
+        continue;
+      }
       if (entry.free) continue;
       // The command bar lies along the near edge of the table (app.js puts the table 0.98 m out, 0.58 m below the eyes).
       if (entry.slot === 'bar') { place(entry, 0, 0.43, eye - 0.55, -0.9); continue; }
       if (entry.slot === 'head') { place(entry, 0, 1.25, eye + 0.34, 0.12); continue; }
-      if (entry.slot === 'deck') { place(entry, 0, 0.5, eye - 0.455, -0.75); continue; }
       if (entry.slot === 'keys') { place(entry, 0, 0.52, eye - 0.36, -0.55); continue; }
       (columns[entry.slot] ||= []).push(entry);
     }
@@ -148,6 +213,7 @@ export class Dock extends EventTarget {
   release(panel) {
     const entry = this.entries.get(panel.id);
     if (!entry) return;
+    if (!entry.free) { panel.free = true; panel.invalidate(); }
     entry.free = true; entry.position.copy(panel.group.position); entry.quaternion.copy(panel.group.quaternion);
   }
 

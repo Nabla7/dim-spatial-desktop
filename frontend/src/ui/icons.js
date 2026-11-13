@@ -22,6 +22,8 @@ export const icons = {
   scene: ctx => { poly(ctx, [[0, -10], [9, -5], [9, 5], [0, 10], [-9, 5], [-9, -5]], true); poly(ctx, [[-9, -5], [0, 0], [9, -5]]); poly(ctx, [[0, 0], [0, 10]]); },
   // A strip of film: recorded data to play back.
   film: ctx => { ctx.strokeRect(-9, -7, 18, 14); for (const x of [-6, 0, 6]) { ctx.fillRect(x - 1, -6, 2, 2.5); ctx.fillRect(x - 1, 3.5, 2, 2.5); } poly(ctx, [[-2.5, -2.5], [3, 0], [-2.5, 2.5]], true, true); },
+  // A lit lamp in a ring: recording.
+  record: ctx => { circle(ctx, 0, 0, 9); circle(ctx, 0, 0, 4.5, true); },
   refresh: ctx => { path(ctx, () => ctx.arc(0, 0, 8, -0.4, Math.PI * 1.45)); poly(ctx, [[4, -9], [8.5, -3.5], [2, -2.5]], true, true); },
   chevron: ctx => poly(ctx, [[-4, -7], [4, 0], [-4, 7]]),
   down: ctx => poly(ctx, [[-7, -4], [0, 4], [7, -4]]),
