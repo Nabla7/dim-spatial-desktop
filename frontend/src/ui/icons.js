@@ -18,6 +18,8 @@ export const icons = {
   stepOn: ctx => { ctx.fillRect(5, -7, 3, 14); poly(ctx, [[-7, -7], [3, 0], [-7, 7]], true, true); },
   skipBack: ctx => { poly(ctx, [[0, -7], [-9, 0], [0, 7]], true, true); poly(ctx, [[9, -7], [0, 0], [9, 7]], true, true); },
   skipOn: ctx => { poly(ctx, [[0, -7], [9, 0], [0, 7]], true, true); poly(ctx, [[-9, -7], [0, 0], [-9, 7]], true, true); },
+  // A block seen from a corner: a scene.
+  scene: ctx => { poly(ctx, [[0, -10], [9, -5], [9, 5], [0, 10], [-9, 5], [-9, -5]], true); poly(ctx, [[-9, -5], [0, 0], [9, -5]]); poly(ctx, [[0, 0], [0, 10]]); },
   // A strip of film: recorded data to play back.
   film: ctx => { ctx.strokeRect(-9, -7, 18, 14); for (const x of [-6, 0, 6]) { ctx.fillRect(x - 1, -6, 2, 2.5); ctx.fillRect(x - 1, 3.5, 2, 2.5); } poly(ctx, [[-2.5, -2.5], [3, 0], [-2.5, 2.5]], true, true); },
   refresh: ctx => { path(ctx, () => ctx.arc(0, 0, 8, -0.4, Math.PI * 1.45)); poly(ctx, [[4, -9], [8.5, -3.5], [2, -2.5]], true, true); },

@@ -184,7 +184,8 @@ export function openAgent(app, {draft} = {}) {
         let y = inner.y + 4;
         if (!current.messages.length) {
           ui.text('Nothing said yet.', inner.x + 8, y + 22, {color: ui.tone('muted')});
-          ui.wrap(coding ? current.intro : 'What you type goes to the agent in the running blueprint. Its answers, the skills it calls and their results appear here.', new Rect(inner.x + 8, y + 46, inner.w - 16, 0), {size: SIZE.sm, color: ui.tone('muted', 0.8), lineHeight: 1.5});
+          // With a scene on the table the agent starts where that scene's author works, not in the dimos checkout.
+          ui.wrap(coding ? (app.agentFolder ? current.intro.replace('in the dimos checkout', `in ${app.agentFolder}`).replace('Ask it about the running blueprint, have', 'Ask it about the scene on the table, have') : current.intro) : 'What you type goes to the agent in the running blueprint. Its answers, the skills it calls and their results appear here.', new Rect(inner.x + 8, y + 46, inner.w - 16, 0), {size: SIZE.sm, color: ui.tone('muted', 0.8), lineHeight: 1.5});
           return 190;
         }
         for (const message of current.messages) y += drawMessage(ui, inner, y, message, current);

@@ -4,120 +4,18 @@
 // images and world is done by replay/worker.py, a Python process started with the runtime that wrote
 // the episode (the dimos checkout its simulation record names), so its MuJoCo and its sim2 code match
 // the data. Nothing here writes into a dataset: what is computed is kept under this app's own data folder.
-import { agentEnv } from "./session.ts";
+import { type Answer, container, dirname, exists, follow, type Job, json, PythonWorker, readJson, type Runtime, shortHash } from "./worker.ts";
 
 export type ReplayApp = { dataDir?: string; dimosDir?: string; dimosPython?: string };
 type Dataset = { id: string; path: string; label: string; where: string; added: boolean; at: number };
-type Runtime = { python: string; cwd: string };
-type Answer = { meta: Record<string, unknown>; payload: Uint8Array };
-type Job = { state: "running" | "done" | "failed"; startedAt: number; done?: number; total?: number; error?: string; result?: unknown; note?: string };
 
 const WORKER = new URL("./replay/worker.py", import.meta.url).pathname;
 const RECOVER = new URL("./replay/recover.py", import.meta.url).pathname;
 const NAME = /^[\w.-]+$/;
 
-const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
-const exists = (path: string) => Deno.stat(path).then(() => true, () => false);
-const readJson = async (path: string) => { try { return JSON.parse(await Deno.readTextFile(path)); } catch { return null; } };
-const dirname = (path: string) => path.replace(/\/+$/, "").replace(/\/[^/]*$/, "") || "/";
-
-async function shortHash(text: string): Promise<string> {
-  const bytes = new Uint8Array(await crypto.subtle.digest("SHA-1", new TextEncoder().encode(text)));
-  return [...bytes.slice(0, 6)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-// JSON meta and raw bytes in one response: [uint32 length of the JSON, little endian][JSON, padded with
-// spaces so the bytes start on a multiple of four][bytes]. The page views the bytes as typed arrays.
-function container(meta: unknown, payload: Uint8Array): Response {
-  const head = new TextEncoder().encode(JSON.stringify(meta)), pad = (4 - (head.length % 4)) % 4;
-  const out = new Uint8Array(4 + head.length + pad + payload.length);
-  new DataView(out.buffer).setUint32(0, head.length + pad, true);
-  out.set(head, 4); out.fill(32, 4 + head.length, 4 + head.length + pad); out.set(payload, 4 + head.length + pad);
-  return new Response(out, { headers: { "content-type": "application/octet-stream", "cache-control": "no-store" } });
-}
-
-// -- the worker ---------------------------------------------------------------------------------------
-// One long-lived process per Python runtime. A request is a JSON line; the answer is a JSON line and then
-// the number of raw bytes that line names. Requests go one at a time.
-class Worker {
-  #process: Deno.ChildProcess;
-  #stdin: WritableStreamDefaultWriter<Uint8Array>;
-  #reader: ReadableStreamDefaultReader<Uint8Array>;
-  #held = new Uint8Array(0);
-  #chain: Promise<unknown> = Promise.resolve();
-  #seq = 0;
-  dead = false;
-  used = Date.now();
-  log: string[] = [];
-
-  constructor(readonly runtime: Runtime) {
-    this.#process = new Deno.Command(runtime.python, {
-      args: [WORKER], cwd: runtime.cwd, env: { ...agentEnv([]), PYTHONUNBUFFERED: "1" }, clearEnv: true, stdin: "piped", stdout: "piped", stderr: "piped",
-    }).spawn();
-    this.#stdin = this.#process.stdin.getWriter();
-    this.#reader = this.#process.stdout.getReader();
-    this.#drain(this.#process.stderr);
-    this.#process.status.then(() => { this.dead = true; });
-  }
-
-  async #drain(stream: ReadableStream<Uint8Array>) {
-    const reader = stream.pipeThrough(new TextDecoderStream()).getReader();
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      for (const line of value.split("\n")) if (line.trim()) { this.log.push(line); if (this.log.length > 40) this.log.shift(); }
-    }
-  }
-
-  async #fill(): Promise<boolean> {
-    const { value, done } = await this.#reader.read();
-    if (done || !value) return false;
-    const joined = new Uint8Array(this.#held.length + value.length);
-    joined.set(this.#held); joined.set(value, this.#held.length); this.#held = joined;
-    return true;
-  }
-
-  async #line(): Promise<string> {
-    for (;;) {
-      const end = this.#held.indexOf(10);
-      if (end >= 0) { const line = new TextDecoder().decode(this.#held.subarray(0, end)); this.#held = this.#held.slice(end + 1); return line; }
-      if (!await this.#fill()) throw new Error(`the replay reader stopped${this.log.length ? `: ${this.log.at(-1)}` : ""}`);
-    }
-  }
-
-  async #bytes(count: number): Promise<Uint8Array> {
-    while (this.#held.length < count) if (!await this.#fill()) throw new Error("the replay reader stopped in the middle of an answer");
-    const out = this.#held.slice(0, count);
-    this.#held = this.#held.slice(count);
-    return out;
-  }
-
-  call(request: Record<string, unknown>): Promise<Answer> {
-    const run = this.#chain.then(async () => {
-      if (this.dead) throw new Error("the replay reader is not running");
-      const id = ++this.#seq;
-      await this.#stdin.write(new TextEncoder().encode(JSON.stringify({ ...request, id }) + "\n"));
-      const head = JSON.parse(await this.#line());
-      const payload = head.bytes ? await this.#bytes(head.bytes) : new Uint8Array(0);
-      if (!head.ok) throw new Error(head.error || "the replay reader could not answer");
-      return { meta: head.meta ?? {}, payload };
-    });
-    this.#chain = run.catch(() => {});
-    this.used = Date.now();
-    // A reader that hangs (a file on a disk that went away) must not hold every later request.
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const late = new Promise<Answer>((_, reject) => { timer = setTimeout(() => reject(new Error("the replay reader did not answer in time")), 120_000); });
-    return Promise.race([run, late])
-      .catch((error) => { if (/in time|stopped/.test(error.message)) this.close(); throw error; })
-      .finally(() => clearTimeout(timer));
-  }
-
-  close() { this.dead = true; try { this.#process.kill("SIGTERM"); } catch { /* already gone */ } }
-}
-
 export class Replay {
   #app: ReplayApp;
-  #workers = new Map<string, Worker>();
+  #workers = new Map<string, PythonWorker>();
   #datasets: Dataset[] = [];
   #scanned = 0;
   #runtimes = new Map<string, Runtime>();
@@ -241,10 +139,10 @@ export class Replay {
     return runtime;
   }
 
-  async #worker(dir: string): Promise<Worker> {
+  async #worker(dir: string): Promise<PythonWorker> {
     const runtime = await this.#runtime(dir);
     let worker = this.#workers.get(runtime.python);
-    if (!worker || worker.dead) { worker = new Worker(runtime); this.#workers.set(runtime.python, worker); }
+    if (!worker || worker.dead) { worker = new PythonWorker(WORKER, runtime, "replay reader"); this.#workers.set(runtime.python, worker); }
     return worker;
   }
 
@@ -286,23 +184,8 @@ export class Replay {
 
   // -- work that takes a while: one Python process each, followed here ----------------------------------
   #spawn(runtime: Runtime, args: string[], onLine: (line: string) => void, onEnd: (code: number, log: string[]) => void) {
-    const process = new Deno.Command(runtime.python, { args, cwd: runtime.cwd, env: { ...agentEnv([]), PYTHONUNBUFFERED: "1" }, clearEnv: true, stdin: "null", stdout: "piped", stderr: "piped" }).spawn();
+    const process = follow(runtime, args, onLine, (code, log) => { this.#children.delete(process); onEnd(code, log); });
     this.#children.add(process);
-    const log: string[] = [];
-    const follow = async (stream: ReadableStream<Uint8Array>, each: (line: string) => void) => {
-      const reader = stream.pipeThrough(new TextDecoderStream()).getReader();
-      let rest = "";
-      for (;;) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        rest += value;
-        let end: number;
-        while ((end = rest.indexOf("\n")) >= 0) { each(rest.slice(0, end)); rest = rest.slice(end + 1); }
-      }
-    };
-    follow(process.stdout, onLine);
-    follow(process.stderr, (line) => { if (line.trim()) { log.push(line); if (log.length > 30) log.shift(); } });
-    process.status.then((status) => { this.#children.delete(process); onEnd(status.code, log); });
   }
 
   async recover(id: string, name: string): Promise<Job> {

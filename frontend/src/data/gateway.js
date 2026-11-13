@@ -94,6 +94,28 @@ export const gateway = {
     audit: (id, start = false) => request(`api/replay/datasets/${segment(id)}/audit`, start ? {method: 'POST', body: {}} : {}),
   },
 
+  // -- this app's own server: USD scenes to walk through, check, mark and hand to an agent ---------------
+  scenes: {
+    list: (rescan = false) => request(`api/scenes/library${rescan ? '?rescan=1' : ''}`, {timeout: 90000}),
+    add: path => request('api/scenes/library', {method: 'POST', body: {path}, timeout: 90000}),
+    scene: (id, revision = null) => request(`api/scenes/library/${segment(id)}${revision == null ? '' : `?revision=${revision}`}`, {timeout: 120000}),
+    view: (id, revision, start = false) => request(`api/scenes/library/${segment(id)}/revisions/${revision}/view`, start ? {method: 'POST', body: {}} : {}),
+    // Where a file of the derived view is served from (the GLB names its images relative to itself).
+    viewUrl: (id, revision, file) => url(`api/scenes/library/${segment(id)}/revisions/${revision}/view/file/${file}`).href,
+    check: (id, revision, body, start = false) => request(`api/scenes/library/${segment(id)}/revisions/${revision}/check?body=${segment(body)}`, start ? {method: 'POST', body: {}} : {}),
+    floor: (id, revision, body) => binary(`api/scenes/library/${segment(id)}/revisions/${revision}/check/floor?body=${segment(body)}`),
+    ray: (id, revision, origin, direction) => request(`api/scenes/library/${segment(id)}/revisions/${revision}/ray`, {method: 'POST', body: {origin, direction}, timeout: 240000}),
+    warm: (id, revision) => request(`api/scenes/library/${segment(id)}/revisions/${revision}/warm`, {method: 'POST', body: {}, timeout: 240000}),
+    revisions: id => request(`api/scenes/library/${segment(id)}/revisions`),
+    mark: (id, revision, state) => request(`api/scenes/library/${segment(id)}/revisions/${revision}`, {method: 'POST', body: {state}}),
+    diff: (id, a, b) => request(`api/scenes/library/${segment(id)}/diff?a=${a}&b=${b}`, {timeout: 240000}),
+    pin: (id, pin) => request(`api/scenes/library/${segment(id)}/pins`, {method: 'POST', body: pin}),
+    editPin: (id, n, changes) => request(`api/scenes/library/${segment(id)}/pins/${n}`, {method: 'POST', body: changes}),
+    removePin: (id, n) => request(`api/scenes/library/${segment(id)}/pins/${n}`, {method: 'DELETE'}),
+    snapshot: (id, blob) => fetch(url(`api/scenes/library/${segment(id)}/snapshots`), {method: 'POST', headers: {'content-type': blob.type}, body: blob}).then(response => response.json()),
+    evidenceUrl: (id, k, thumbnail = false) => url(`api/scenes/library/${segment(id)}/evidence/${k}/${thumbnail ? 'thumbnail' : 'image'}`).href,
+  },
+
   // -- Desktop --------------------------------------------------------------------------------------
   zenoh: () => request('../../gateways/desktop/management/gateways/zenoh'),
   rates: () => request('../../gateways/desktop/topics/rates'),

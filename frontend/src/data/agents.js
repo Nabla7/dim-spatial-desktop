@@ -116,7 +116,7 @@ export class SessionAgent extends Backend {
 
   async start({resume = false} = {}) {
     if (this.starting) return this.starting;
-    this.starting = gateway.agent.create({backend: this.id, model: this.choice || undefined, effort: this.effortChoice || undefined, resume}).then(session => { this.attach(session.id); return session.id; }).finally(() => { this.starting = null; });
+    this.starting = gateway.agent.create({backend: this.id, model: this.choice || undefined, effort: this.effortChoice || undefined, resume, cwd: this.app.agentFolder || undefined}).then(session => { this.attach(session.id); return session.id; }).finally(() => { this.starting = null; });
     return this.starting;
   }
 
@@ -158,7 +158,7 @@ export class SessionAgent extends Backend {
   apply(event) {
     const add = message => { this.messages.push({at: Date.now(), ...message}); if (this.messages.length > 500) this.messages.splice(0, 100); };
     switch (event.t) {
-      case 'init': this.model = event.model; this.mode = event.mode; this.cwd = event.cwd; this.effort = event.effort ?? null; this.sandbox = event.sandbox ?? null; break;
+      case 'init': this.model = event.model; this.mode = event.mode; this.cwd = event.cwd; this.sessionFolder = event.cwd; this.effort = event.effort ?? null; this.sandbox = event.sandbox ?? null; break;
       case 'user': {
         this.formTurn = event.text.startsWith(FORM_ASK);
         add(this.formTurn ? {role: 'system', text: `A panel asked ${this.name} to explain ${/^(?:RPC|Stream): ([\w/]+)/m.exec(event.text)?.[1] || 'a call'}.`} : {role: 'user', text: event.text});
@@ -209,6 +209,15 @@ export class SessionAgent extends Backend {
 
   async send(text) {
     try {
+      // What is on the table can name the folder to work in (a scene's project). A conversation that was
+      // started somewhere else is left as it is, and a new one starts there.
+      const folder = this.app.agentFolder;
+      if (this.session && folder && this.sessionFolder && this.sessionFolder.replace(/\/+$/, '') !== folder.replace(/\/+$/, '')) {
+        const old = this.session;
+        this.session = null; this.messages = []; this.model = null; this.sessionFolder = null;
+        gateway.agent.close(old).catch(() => {});
+        this.push({role: 'system', text: `A new conversation, in ${folder}.`});
+      }
       if (!this.session) await this.start();
       this.busy = true; this.changed();
       await gateway.agent.send(this.session, text);

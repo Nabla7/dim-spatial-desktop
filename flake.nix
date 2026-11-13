@@ -9,7 +9,7 @@
       packages = forAll (pkgs:
         let
           # The page is served as it is (no build step) and the server has no dependencies beyond Deno itself.
-          source = pkgs.lib.fileset.toSource { root = ./.; fileset = pkgs.lib.fileset.unions [ ./frontend ./server ]; };
+          source = pkgs.lib.fileset.toSource { root = ./.; fileset = pkgs.lib.fileset.unions [ ./frontend ./server ./docs ]; };
         in rec {
           dimosApp = pkgs.writeShellScriptBin "dimos-app-server" ''
             exec ${pkgs.deno}/bin/deno run -A --no-lock --no-remote ${source}/server/main.ts --frontend ${source}/frontend "$@"

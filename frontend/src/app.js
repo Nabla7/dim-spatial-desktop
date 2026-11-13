@@ -20,12 +20,15 @@ import {gateway} from './data/gateway.js';
 import {Controls} from './data/controls.js';
 import {Replay} from './data/replay.js';
 import {ReplayScene} from './scene/replay.js';
+import {Scenes} from './data/scenes.js';
+import {SceneView} from './scene/scenes.js';
 import {openShell} from './panels/shell.js';
 import {openLauncher} from './panels/launcher.js';
 import {openModules} from './panels/modules.js';
 import {openModule} from './panels/module.js';
 import {openKeyboard} from './panels/keyboard.js';
 import {openReplay, watchReplay} from './panels/replay.js';
+import {openScenes, watchScenes} from './panels/scenes.js';
 
 const TABLE = new THREE.Vector3(0, 0.95, 0), FOV = 50;
 
@@ -71,12 +74,17 @@ export class App extends EventTarget {
     this.controls = new Controls(this);
     this.replay = new Replay(this);
     this.replayScene = new ReplayScene(this);
+    this.scenes = new Scenes(this);
+    this.sceneView = new SceneView(this);
+    // One thing has the table: an episode that opens takes it from a scene.
+    this.replay.addEventListener('open', () => this.scenes.close());
     this.pointers.onTablePoint = point => this.controls.place(point);
     this.pointers.driveSticks = (left, right) => this.controls.sticks(left, right);
     this.toasts = []; this.selected = null; this.last = performance.now();
 
     openShell(this);
     watchReplay(this);
+    watchScenes(this);
     this.reopen();
     this.blueprint.start();
     // The left side shows what matters now: the catalog while nothing runs, the modules once something does.
@@ -84,8 +92,8 @@ export class App extends EventTarget {
     this.blueprint.addEventListener('change', () => {
       const running = this.blueprint.phase === 'running' || this.blueprint.phase === 'starting';
       if (running === wasRunning) return;
-      // Not over a replay: its panel has the left side until the user opens something else there.
-      if (!this.dock.has('replay') && (wasRunning === null || !this.dock.entries.get(running ? 'launcher' : 'modules')?.free)) {
+      // Not over a replay or a scene: its panel has the left side until the user opens something else there.
+      if (!this.dock.has('replay') && !this.dock.has('scenes') && (wasRunning === null || !this.dock.entries.get(running ? 'launcher' : 'modules')?.free)) {
         if (running && !this.dock.has('modules')) openModules(this);
         if (!running && !this.dock.has('launcher')) openLauncher(this);
       }
@@ -117,7 +125,8 @@ export class App extends EventTarget {
   beforeReload() {
     const open = this.dock.panels.filter(panel => !panel.closing).map(panel => panel.id).filter(id => !['head', 'bar', 'keyboard'].includes(id));
     const replay = this.replay.active ? {dataset: this.replay.dataset?.id, episode: this.replay.name, time: this.replay.time} : null;
-    sessionStorage.setItem('spatial.reopen', JSON.stringify({at: Date.now(), open, replay}));
+    const scene = this.scenes.active ? {id: this.scenes.id, revision: this.scenes.revision} : null;
+    sessionStorage.setItem('spatial.reopen', JSON.stringify({at: Date.now(), open, replay, scene}));
   }
 
   // After a reload the page made itself: the panels that were open come back (a module's panel once
@@ -126,8 +135,9 @@ export class App extends EventTarget {
     let kept = null;
     try { kept = JSON.parse(sessionStorage.getItem('spatial.reopen') || 'null'); sessionStorage.removeItem('spatial.reopen'); } catch { /* no storage */ }
     if (!kept || Date.now() - kept.at > 20000) return;
-    for (const id of kept.open) if (this.openers[id] && !this.dock.has(id) && !(id === 'replay' && kept.replay)) this.openers[id]();
+    for (const id of kept.open) if (this.openers[id] && !this.dock.has(id) && !(id === 'replay' && kept.replay) && !(id === 'scenes' && kept.scene)) this.openers[id]();
     if (kept.replay) openReplay(this, kept.replay);
+    if (kept.scene) openScenes(this, kept.scene);
     const modules = kept.open.filter(id => id.startsWith('module:')).map(id => id.slice(7));
     if (modules.length) this.blueprint.addEventListener('modules', () => { for (const id of modules) if (this.blueprint.module(id) && !this.dock.has(`module:${id}`)) openModule(this, id); }, {once: true});
   }
@@ -174,6 +184,9 @@ export class App extends EventTarget {
         view: 'spatial-desktop', blueprint: this.blueprint.name, phase: this.blueprint.phase, selected: this.selected, immersive: this.xr.presenting,
         // A recorded episode on the table instead of the live blueprint: which one, and where the playhead is.
         replay: this.replay.active ? {folder: `${this.replay.dataset?.path}/${this.replay.name}`, frame: this.replay.frame, seconds: this.replay.time, playing: this.replay.playing} : null,
+        // A scene on the table: which file, where the user stands in it, what they pointed at, and how an agent answers.
+        scene: this.scenes.active ? {name: this.scenes.open.scene.name, usd: this.scenes.current?.usd, revision: this.scenes.revision, manifest: this.scenes.open.scene.manifest, ...this.scenes.open.agent,
+          camera: this.sceneView.viewer(), pointed_at: this.scenes.selected?.point ?? null, open_pins: this.scenes.pins.filter(pin => pin.state === 'open').length} : null,
         visible: {
           modules: this.blueprint.modules.map(module => ({id: module.id, label: module.name})),
           panels: this.dock.panels.map(panel => panel.id),
@@ -181,7 +194,7 @@ export class App extends EventTarget {
         },
       }).catch(() => {}), 1200);
     };
-    this.addEventListener('select', report); this.dock.addEventListener('change', report); this.replay.addEventListener('change', report);
+    this.addEventListener('select', report); this.dock.addEventListener('change', report); this.replay.addEventListener('change', report); this.scenes.addEventListener('change', report);
     this.layers.addEventListener('change', report); this.blueprint.addEventListener('modules', report); this.xr.addEventListener('change', report);
     this.bus.ready.then(() => this.bus.subscribeEvents('desktop', event => {
       if (event.type !== 'view-highlight' || (event.app && event.app !== name)) return;
@@ -213,6 +226,7 @@ export class App extends EventTarget {
 
   // -- XR -------------------------------------------------------------------------------------------
   onSessionStart(session) {
+    if (this.sceneView.walk.on) this.sceneView.leave();
     this.orbit.enabled = false;
     this.dock.setMode('room');
     this.backdrop.setPassthrough(this.xr.passthrough);
@@ -221,6 +235,7 @@ export class App extends EventTarget {
   }
 
   onSessionEnd() {
+    if (this.sceneView.walk.on) this.sceneView.leave();
     this.orbit.enabled = true;
     this.dock.setMode('hud');
     this.backdrop.setPassthrough(false);
@@ -248,16 +263,33 @@ export class App extends EventTarget {
     this.last = now;
     if (this.toasts.length && this.toasts[this.toasts.length - 1].until < now) { this.toasts = this.toasts.filter(toast => toast.until >= now); this.dispatchEvent(new Event('toast')); }
     if (xrFrame) { this.xr.place(xrFrame); this.hands.update(xrFrame, this.renderer.xr.getReferenceSpace()); }
-    else this.orbit.update();
+    else if (!this.sceneView.walk.on) this.orbit.update();   // a viewer inside a scene holds the camera
     this.stage.update(time / 1000, dt);
     this.pointers.update(dt, xrFrame, this.theme.three.primary);
     this.controls.tick(now);
     this.replay.tick(now, dt);
-    // A replayed episode has the table: the live layers wait until it is closed.
-    if (this.replay.active) this.replayScene.update(now); else this.layers.update(dt, now);
+    // A scene or a replayed episode has the table: the live layers wait until it is closed.
+    if (this.scenes.active) this.sceneView.update(now, dt); else if (this.replay.active) this.replayScene.update(now); else this.layers.update(dt, now);
     this.halo.update(dt, now);
     this.dock.update(now, dt);
     this.backdrop.update(time / 1000, this.renderer);
-    this.renderer.render(this.scene, this.camera);
+    if (this.sceneView.walk.on && !xrFrame) this.renderInside(); else this.renderer.render(this.scene, this.camera);
+  }
+
+  // Inside a scene, things of the scene come nearer to the eye than the panels that ride with the camera.
+  // The panels are drawn after the scene and over it, so a table in front of the viewer never hides one.
+  renderInside() {
+    const {renderer, scene, camera, dock} = this;
+    const shown = dock.hud.visible;
+    dock.hud.visible = false;
+    renderer.render(scene, camera);
+    if (!shown) return;   // the viewer put the panels away
+    const rest = scene.children.filter(child => child !== camera && child.visible);
+    for (const child of rest) child.visible = false;
+    dock.hud.visible = true;
+    renderer.autoClear = false; renderer.clearDepth();
+    renderer.render(scene, camera);
+    renderer.autoClear = true;
+    for (const child of rest) child.visible = true;
   }
 }

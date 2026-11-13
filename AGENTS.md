@@ -3,7 +3,8 @@
 A DimOS Desktop app: a page (three.js + WebXR, no build step) and a small Deno server. The page shows
 the running blueprint as holograms, a heads-up cockpit on a screen and a room in a headset. The server
 serves the page, runs the coding agents the page talks to (Claude Code, Codex), reads the Python
-source behind an RPC, and reads recorded episodes for the replay. Read README.md for what it does.
+source behind an RPC, reads recorded episodes for the replay, and reads and checks USD scenes. Read
+README.md for what it does and docs/SCENES.md for what a scene is.
 
 ## Rules
 
@@ -30,6 +31,14 @@ source behind an RPC, and reads recorded episodes for the replay. Read README.md
 - **The page knows no recording format.** An episode reaches it as a clock with named cameras, signals,
   bands, checks and facts, and a world as shapes fixed to bodies with a pose table. What a file format or
   a robot needs is in the reader (`server/replay/`), found from the data (the simulation record), not named.
+- **A scene is read, never written.** Derived views, checks, pins, pictures and the record of revisions go
+  under this app's data folder. A change to a scene is a new USD file that an agent (or a person) writes
+  and announces; the page shows it and the user keeps or rejects it. Nothing here edits a USD.
+- **The page knows no scene format, and no scene.** It gets glTF derived from the USD, a check report,
+  rays answered by the compiled model, and what the manifest says (places, forms, recorded views). What is
+  particular to one scene belongs in its `scene.json`, not in code.
+- **What a scene is asked is asked of the engine.** A press, a floor, a body that fits: the answer comes
+  from the model sim2's loader compiles (`check.World`), not from the triangles the page draws.
 
 ## Layout
 
@@ -45,6 +54,11 @@ server/source.ts            the Python source of one method of a module class, f
 server/replay.ts            datasets on disk, the reader process per Python runtime, routes api/replay/*
 server/replay/worker.py     reads an episode: frames, checks, images, the model's shapes, where each body was
 server/replay/recover.py    runs an episode's physics again in sim2 and compares it with the recording
+server/worker.ts            what the readers share: a long-lived Python process, a followed one, bytes in an answer
+server/scenes.ts            scenes on disk, the Python that can read them, views, checks, rays, pins, revisions; routes api/scenes/*
+server/scenes/check.py      the check of a scene (docs/SCENES.md); Scene (the USD and its manifest), World (the compiled model)
+server/scenes/derive.py     USD -> scene.glb (visible shapes, materials), collision.glb, textures, view.json
+server/scenes/worker.py     describes a stage, answers rays with the compiled model, compares two revisions
 frontend/index.html         theme link, import map (vendor/three), boot note
 frontend/src/update.js      reloads an open page when the server serves a newer build
 frontend/src/main.js        entry; ?emulate installs the WebXR emulator
@@ -57,6 +71,7 @@ frontend/src/app.js         App: renderer, stage, dock, pointers, bus, blueprint
   data/controls.js          what can be commanded, found from the blueprint; arming, the lease, the deadman
   data/agents.js, cbor.js   chat backends (a session agent per coding agent, the blueprint's own agent)
   data/replay.js            the open episode: playhead, pictures around it, world, dataset check
+  data/scenes.js            the open scene: its revision, view, check, floor, what was pointed at, pins, comparison
   ui/holo.js                HoloPanel + Ui: immediate-mode widgets on a canvas, hit regions
   ui/rect.js, icons.js      rect-cut layout, line icons
   ui/dock.js                where panels sit: HUD columns on a screen, arcs in a room
@@ -67,6 +82,7 @@ frontend/src/app.js         App: renderer, stage, dock, pointers, bus, blueprint
   scene/layers.js           topics -> layers; tf feed; framing; follow; watchdog
   scene/layer.js            Layer base: visibility drives subscriptions; place() by tf
   scene/tf.js, feeds.js     transform tree; camera video textures shared per topic
+  scene/scenes.js           a scene on the table: shapes, layers over them, pins, recorded views, walking
   scene/viz/*.js            one file per kind of drawing
   scene/halo.js             the ring of module plates and topic arcs
   scene/hologram.js         the hologram material the robot model and a replayed world share
@@ -94,6 +110,14 @@ frontend/src/app.js         App: renderer, stage, dock, pointers, bus, blueprint
   that have every recorded joint; a sampled quantity named like a body of the model is that body's placement.
   The worker answers `episode`, `images`, `scene`, `motion`: bytes travel as `[uint32 n][JSON, n bytes][bytes]`.
   While an episode is open the live layers are hidden and not updated; `ReplayScene` owns the table.
+- **Scenes** (`server/scenes.ts`, `data/scenes.js`, `scene/scenes.js`, `panels/scenes.js`): a scene, a
+  replayed episode or the live blueprint has the table, one at a time. The view is glTF with y up, turned
+  to the table's z up; the files a GLB names are served beside it. Labels and marks keep their size on the
+  table (`sized`), and a label shows whole or not at all. WALK is life size with the camera held by
+  `SceneView`: `app.frame` then skips OrbitControls and draws the panels in a second pass over the scene.
+  A press becomes a ray in the scene's frame, started where it enters what the table's planes show.
+  Revisions: number 0 is the manifest's; later ones come from JSON files dropped in the scene's inbox,
+  which the page polls. A comparison is always the later revision against the earlier one.
 
 ## Adding things
 
@@ -109,6 +133,11 @@ frontend/src/app.js         App: renderer, stage, dock, pointers, bus, blueprint
   for the frames it fails on. It then shows in CHECKS, on the timeline and in the dataset check.
 - **Another recording format**: a reader in `server/replay/` that answers the same four requests; the
   page needs no change.
+- **A check of a scene**: a function in `server/scenes/check.py` that returns a `Check`, added to `run()`
+  (a question about the files) or to `physics_checks()` (a question for the compiled model), and a row in
+  docs/SCENES.md. Points to show on the scene go into the check's `data`.
+- **Something drawn over a scene**: a `draw...()` in `scene/scenes.js` that fills one of its layer groups
+  (materials through `track()`), a switch in `LAYERS` of `panels/scenes.js`.
 
 ## Trying a change
 
@@ -121,6 +150,9 @@ back to the committed build.
 
 Check with `node --check` on each module, `deno check server/main.ts` and `dimos-desktop app check .`.
 The replay reader runs by hand: `<dimos checkout>/.venv/bin/python server/replay/worker.py describe <episode folder>`.
+The scene programs too, with a Python that has OpenUSD and MuJoCo's USD importer: `server/scenes/check.py <scene.usda>`,
+`server/scenes/derive.py <scene.usda> <out folder>`, `server/scenes/worker.py describe <scene.usda>` and
+`server/scenes/worker.py diff <before.usda> <after.usda>`.
 There are no unit tests yet; verify in the page against a running blueprint (`window.spatial` is the app)
 and with `?emulate` for XR paths. A new file must be `git add`ed before `nix build .#dimosApp` sees it.
 Vendored code lives in `frontend/vendor/` (three.js 0.180, IWER 2.8 for emulation only); do not edit it.

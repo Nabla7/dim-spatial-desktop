@@ -163,6 +163,69 @@ checkout named in the episode's simulation record, so the model loads with the M
 Nothing is written into a dataset. A re-simulated world and a dataset check are kept under this app's own
 data folder (`replay/`).
 
+## Scenes
+
+**SCENES** puts a USD scene on the table in place of the live blueprint: to walk through it, check it, mark
+what is wrong and hand that to a coding agent. A scene is a USD stage with a `scene.json` beside it that
+says what it was made from ([docs/SCENES.md](docs/SCENES.md) proposes what a scene is and how one is
+checked). Scenes whose manifest is under Desktop's app data are found by themselves. Any other is added by
+the path of its manifest, of a USD file, or of a folder that holds one.
+
+What is on the table is derived from the USD and from nothing else, so it is what a simulator gets: the
+visible shapes with their materials, without the robots a scene file may hold.
+
+- **On the table** the scene is a miniature, cut open at a height above its floor (**CUT**). The deck
+  chooses which storey lies on the table and what is drawn over the shapes.
+- **WALK** puts the viewer inside at life size. On a screen `W A S D` move, `Q` and `E` go down and up,
+  Shift is faster, a drag turns the head, `H` puts the panels away and `Esc` leaves. In a headset the
+  scene is put under the viewer's feet and the sticks move it.
+- **A press on the scene** asks what is there. The answer comes from the model sim2's own loader compiles
+  from the USD, not from the picture: the shape that is seen at that point, the shape a body would touch
+  there, and how far apart the two are.
+- **PIN** keeps the point with a note and a picture of what was on screen.
+- **Layers**: SEEN (the visible shapes), SOLID (the collision shapes, as a ghost), FLOOR (the floor the
+  check's body reached), MARKS (where what is seen and what is solid disagree), PLACES (the ones the
+  manifest names), VIEWS (the cameras of the recording), PINS.
+- **Recorded views**, when the manifest names the recording the scene was made from: each camera of it
+  stands in the scene as a dot. Choose one to hang its picture in front of its camera. STAND WHERE IT STOOD
+  puts the viewer at that camera, where the picture lies exactly over the scene, and a slider blends the
+  recording with the reconstruction.
+
+### Checks
+
+**CHECK THE SCENE** asks the scene a fixed list of questions and shows each answer with its reason
+([docs/SCENES.md](docs/SCENES.md) has the list). The first level, *viewable*, is about files: does it
+open, is it in metres with z up, does it move to another machine, does every file it names carry its hash,
+does it say what it was made from. The second, *navigable*, is asked of the compiled model with rays and
+with a body: is there a floor under each place the manifest names, does the body get from the first place
+to all the others, and do a lidar and a body meet the same walls. The body is the one the manifest names,
+or one of two usual shapes (WHEELED, LEGGED). The floor it reached and the points of disagreement are
+drawn on the scene. For a building of 10,000 collision shapes the check takes about a minute and a half.
+
+### Agents and revisions
+
+**ASK AN AGENT** (in CHECKS and in PINS) opens the chat with a draft that names the revision on the
+table, its manifest, the file of the pins with their pictures, the check command and how to answer. The
+agent is started in the folder the manifest calls `project`, where the scene's author works, so that
+folder's own instructions apply.
+
+An agent never changes a scene in place. It writes a new USD file and announces it with a small JSON
+file in the scene's inbox (the REVISIONS tab shows the folder). The page puts the new revision on the
+table as soon as it is announced, against the one before: green boxes around what came, red boxes around
+what went, for what is seen and for what is solid. SHOW THE OTHER ONE flips between the two, and the
+revision is KEPT or REJECTED.
+
+### How it reads
+
+The server (`server/scenes.ts`) lists scenes, keeps pins and revisions, and serves what the page draws.
+Three Python programs do the reading: `scenes/derive.py` makes a glTF of the visible shapes and one of the
+collision shapes from the USD (seconds, kept afterwards), `scenes/check.py` is the check, and
+`scenes/worker.py` answers rays and compares revisions. They run with a Python that has OpenUSD and
+MuJoCo's USD importer. Desktop's own dimos may have neither, so the dimos checkouts beside it are asked,
+and one that also has sim2's loader is preferred; `DIMOS_SCENES_PYTHON` names one outright. Nothing is
+written into a scene's folder: pins, revisions' records, pictures and derived views are kept under this
+app's data folder (`scenes/`, with the views of the six revisions used last).
+
 ## Pointing, moving, typing
 
 | | screen | headset |
@@ -226,6 +289,17 @@ AGENTS.md says how the code is laid out and where an addition goes.
 - The world of an episode needs its compiled model and the Python environment that wrote it. Running the
   physics again works for episodes of dimos's imitation loop, whose generator it repeats
   (`dimos.imitation.loop.generation`); the result is close to the recording, not identical, and says by how much.
+
+- A scene's materials are drawn when they are `UsdPreviewSurface` (colour, roughness, metalness, normal
+  and emissive images). The scene's own lights are not used: the page lights it. What is not drawn as in
+  the scene is listed under FACTS.
+- The first press on a scene waits until the engine has compiled it (10 to 20 seconds for a building).
+- What changed between two revisions is found from the surfaces of their shapes, to 5 cm. A change of
+  material alone is not found.
+- sim2's loader, as it is in the checkout used here, cannot compile a scene whose root layer refers to
+  another layer that has relative paths of its own. Such a revision is shown, and is asked its questions
+  through MuJoCo's own importer, and its check says that sim2 would not load it.
+- Walking in a scene with a headset ran only in the emulator.
 
 - One blueprint at a time, as the gateway.
 - A `UrdfManager` given several models answers `*.urdf` with the first. The others are asked for by the

@@ -19,6 +19,8 @@ export class Pointers {
     this.twoHand = null;
     this.sticks = {left: [0, 0], right: [0, 0]};
     this.onEmptyClick = null;
+    this.onWorldClick = null;        // a press on the scene that did not move it: (pointer) => void
+    this.panelsFirst = false;        // a panel is hit before anything of the scene, however near that is
     this.bindMouse();
   }
 
@@ -34,7 +36,7 @@ export class Pointers {
   cast(pointer) {
     this.raycaster.ray.copy(pointer.ray);
     const meshes = [];
-    for (const panel of this.dock.panels) if (!panel.closing && panel.group.visible) meshes.push(panel.mesh);
+    for (const panel of this.dock.panels) if (!panel.closing && panel.group.visible && panel.group.parent?.visible !== false) meshes.push(panel.mesh);
     const panelHit = this.raycaster.intersectObjects(meshes, false)[0];
     let best = null;
     if (panelHit?.uv) {
@@ -44,10 +46,11 @@ export class Pointers {
     if (this.picks.size) {
       const visible = [...this.picks.keys()].filter(object => object.visible && object.parent);
       const hit = this.raycaster.intersectObjects(visible, true)[0];
-      if (hit && (!best || hit.distance < best.distance - 0.01)) {
+      if (hit && (!best || (!this.panelsFirst && hit.distance < best.distance - 0.01))) {
         let object = hit.object;
         while (object && !this.picks.has(object)) object = object.parent;
-        if (object) best = {type: 'pick', object, handlers: this.picks.get(object), point: hit.point, distance: hit.distance};
+        // Many things drawn as one (an instanced mesh) say which of them was hit.
+        if (object) best = {type: 'pick', object, handlers: this.picks.get(object), point: hit.point, distance: hit.distance, instanceId: hit.instanceId};
       }
     }
     return best;
@@ -75,7 +78,7 @@ export class Pointers {
     if (hit?.type === 'pick' && !grabOnly) { pointer.press = {type: 'pick', object: hit.object}; return; }
     // A press on the table can be an answer to "point at it" (a goal waiting for a place).
     if (!grabOnly && this.offerTablePoint(pointer)) { pointer.press = {type: 'given'}; return; }
-    pointer.press = {type: 'world'};
+    pointer.press = {type: 'world', at: performance.now(), from: pointer.grip.clone()};
     if (pointer.kind !== 'mouse') this.beginWorldGrab(pointer);
   }
 
@@ -90,7 +93,9 @@ export class Pointers {
     if (press?.type === 'pick' && hit?.type === 'pick' && hit.object === press.object) hit.handlers.onClick?.(hit, pointer);
     if (press?.type === 'world') {
       this.endWorldGrab(pointer);
-      if (pointer.kind === 'mouse' && !pointer.dragged) this.onEmptyClick?.();
+      if (pointer.kind === 'mouse' && !pointer.dragged) { this.onEmptyClick?.(); this.onWorldClick?.(pointer); }
+      // A hand or a controller: a short press that did not move the world is a press on what it points at.
+      else if (pointer.kind !== 'mouse' && press.from && performance.now() - press.at < 400 && pointer.grip.distanceTo(press.from) < 0.02) this.onWorldClick?.(pointer);
     }
   }
 
@@ -357,7 +362,7 @@ export class Pointers {
       const stage = this.stage;
       if (side === 'right') {
         if (x) stage.target.yaw = stage.view.yaw -= x * dt * 1.6;
-        if (y) stage.scaleAbout(Math.exp(-y * dt * 1.4));
+        if (y && !stage.lifeSize) stage.scaleAbout(Math.exp(-y * dt * 1.4));
       } else if (x || y) {
         const step = dt * 0.5 / stage.view.scale, c = Math.cos(-stage.view.yaw), s = Math.sin(-stage.view.yaw);
         // Stick right/forward in the viewer's frame -> robot x/y through the view's yaw.
