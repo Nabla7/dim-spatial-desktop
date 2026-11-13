@@ -6,6 +6,7 @@
 // only while a pad, a key or a stick is held, and the first drive input stores a stop command on the
 // gateway that it sends by itself if this page goes away (the deadman).
 import {gateway} from './gateway.js';
+import {MotionSpeeds} from './motion-speeds.js';
 
 const DRIVE = ['geometry_msgs.Twist', 'geometry_msgs.TwistStamped'];
 const NUMBER = ['std_msgs.Float32', 'std_msgs.Int32', 'std_msgs.Int8', 'std_msgs.UInt32'];
@@ -43,6 +44,7 @@ export class Controls extends EventTarget {
     this.app = app; this.bus = app.bus;
     this.armed = false; this.drives = []; this.numbers = []; this.switches = []; this.goals = []; this.joints = []; this.actions = []; this.statuses = [];
     this.driveKey = null; this.strafe = false; this.speed = {linear: 0.3, angular: 0.8};
+    this.motionSpeeds = new MotionSpeeds(this);
     this.inputs = {pad: [0, 0, 0], keys: [0, 0, 0], sticks: [0, 0, 0]};
     this.command = [0, 0, 0]; this.moving = false; this.zeros = 0; this.lastSent = 0;
     this.publishers = new Map(); this.values = new Map(); this.known = new Map(); this.aiming = null; this.jointState = null; this.jointSubscription = null;
@@ -65,6 +67,7 @@ export class Controls extends EventTarget {
   // -- what can be controlled -----------------------------------------------------------------------
   discover() {
     const blueprint = this.app.blueprint, found = new Map();
+    this.motionSpeeds.discover(blueprint.modules);
     for (const module of blueprint.modules) for (const stream of module.streams) {
       if (!stream.key || !stream.type) continue;
       if (!found.has(stream.key)) found.set(stream.key, {key: stream.key, topic: stream.topic, type: stream.type, readers: [], writers: []});
@@ -97,6 +100,13 @@ export class Controls extends EventTarget {
   }
 
   get any() { return this.drives.length + this.numbers.length + this.switches.length + this.goals.length + this.joints.length + this.actions.length > 0; }
+
+  get settingNumbers() { const keys = this.motionSpeeds.keys; return this.numbers.filter(target => !keys.has(target.key)); }
+
+  setDriveSpeed(axis, value) {
+    if (this.motionSpeeds.provider) this.motionSpeeds.set(this.motionSpeeds.drive[axis], value);
+    else this.speed[axis] = value;
+  }
 
   pin(module, rpc, kwargs) {
     const key = `${module.name}.${rpc.name}`;
@@ -184,6 +194,7 @@ export class Controls extends EventTarget {
 
   // Why commands are not reaching the robot right now, or null.
   get blocked() {
+    if (this.motionSpeeds.provider && !this.motionSpeeds.ready) return this.motionSpeeds.error || 'Reading shared speed settings…';
     const lease = this.lease;
     if (lease.status === 'takenOver') return 'Another app is driving. Your next press takes the controls back.';
     if (lease.status === 'refused') return `The gateway refused this page the controls: ${lease.reason}`;
@@ -251,6 +262,7 @@ export class Controls extends EventTarget {
   send(command) {
     const target = this.drive;
     if (!target) return;
+    if (this.motionSpeeds.provider && !this.motionSpeeds.ready) command = [0, 0, 0];
     this.publish(target, this.twist(target, [command[0] * this.speed.linear, command[1] * this.speed.linear, command[2] * this.speed.angular]));
   }
 
@@ -386,6 +398,7 @@ export class Controls extends EventTarget {
     if (!on) { clearInterval(this.statusTimer); this.statusTimer = null; return; }
     if (this.statusTimer) return;
     const read = async () => {
+      await this.motionSpeeds.refresh();
       for (const entry of this.statuses.slice(0, 4)) {
         try { const answer = await gateway.callRpc(entry.module.id, entry.rpc.name, {}); entry.value = answer.ok ? answer.result : null; entry.error = answer.ok ? null : answer.error; }
         catch (error) { entry.error = error.message; }

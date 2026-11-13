@@ -72,11 +72,12 @@ export function openControl(app) {
     const [vx, vy, wz] = controls.command, moving = controls.moving;
     ui.text(`v ${(vx * controls.speed.linear).toFixed(2)}  ${(vy * controls.speed.linear).toFixed(2)} m/s    ω ${(wz * controls.speed.angular).toFixed(2)} rad/s`, area.cx, area.cutTop(24, 6).cy, {size: SIZE.sm, family: 'mono', color: ui.tone(moving ? 'fg' : 'muted'), align: 'center'});
     ui.toggle(area.cutTop(36, 6), 'Sideways slides (holonomic base)', controls.strafe, on => { controls.strafe = on; }, {id: 'strafe'});
-    ui.text('Top speed', area.x, area.y + 18, {size: SIZE.sm, color: ui.tone('muted')});
-    ui.slider(new Rect(area.x + 110, area.y, area.w - 110, 36), controls.speed.linear, 0.05, 1.5, value => { controls.speed.linear = value; }, {id: 'speed:linear', step: 0.05, format: value => `${value.toFixed(2)} m/s`});
+    const speeds = controls.motionSpeeds, linear = speeds.settings[speeds.drive.linear], angular = speeds.settings[speeds.drive.angular];
+    ui.text(speeds.provider ? 'Shared speed' : 'Top speed', area.x, area.y + 18, {size: SIZE.sm, color: ui.tone('muted')});
+    ui.slider(new Rect(area.x + 130, area.y, area.w - 130, 36), controls.speed.linear, linear?.min ?? 0.05, linear?.max ?? 1.5, value => controls.setDriveSpeed('linear', value), {id: 'speed:linear', enabled: !speeds.provider || (armed && speeds.ready), step: 0.05, format: value => `${value.toFixed(2)} m/s`});
     area.cutTop(40, 0);
-    ui.text('Top turn', area.x, area.y + 18, {size: SIZE.sm, color: ui.tone('muted')});
-    ui.slider(new Rect(area.x + 110, area.y, area.w - 110, 36), controls.speed.angular, 0.1, 2.5, value => { controls.speed.angular = value; }, {id: 'speed:angular', step: 0.05, format: value => `${value.toFixed(2)} rad/s`});
+    ui.text(speeds.provider ? 'Shared turn' : 'Top turn', area.x, area.y + 18, {size: SIZE.sm, color: ui.tone('muted')});
+    ui.slider(new Rect(area.x + 130, area.y, area.w - 130, 36), controls.speed.angular, angular?.min ?? 0.1, angular?.max ?? 2.5, value => controls.setDriveSpeed('angular', value), {id: 'speed:angular', enabled: !speeds.provider || (armed && speeds.ready), step: 0.05, format: value => `${value.toFixed(2)} rad/s`});
     area.cutTop(44, 0);
     ui.wrap(armed ? 'Hold the pad, or keys W S (forward, back), A D (turn), Q E (slide). Space stops. In a headset: left stick moves, right stick turns.' : 'Arm the controls to drive.', area, {size: SIZE.xs, color: ui.tone('muted', 0.85), maxLines: 3, lineHeight: 1.45});
     if (moving) panel.invalidate();
@@ -85,7 +86,13 @@ export function openControl(app) {
   function drawSet(ui, inner) {
     let y = inner.y;
     const armed = controls.armed;
-    for (const target of controls.numbers) {
+    const speeds = controls.motionSpeeds;
+    for (const [name, setting] of Object.entries(speeds.settings)) {
+      ui.text(`${setting.label || name} · shared`, inner.x, y + 14, {size: SIZE.md, weight: 500, max: inner.w});
+      ui.slider(new Rect(inner.x, y + 26, inner.w, 36), setting.value, setting.min, setting.max, value => speeds.set(name, value), {id: `speed:${name}`, enabled: armed && speeds.ready, step: 0.01, format: value => `${value.toFixed(2)} ${setting.unit || ''}`});
+      y += 72; ui.hair(inner.x, y - 2, inner.r, y - 2);
+    }
+    for (const target of controls.settingNumbers) {
       const mode = controls.mode(target), hold = !!mode.hold, [low, high] = controls.ranges[target.key] || (hold ? [-1, 1] : controls.range(target));
       const value = controls.values.get(target.key) ?? (hold ? 0 : low), asking = state.asking === target.key;
       ui.text(short(target), inner.x, y + 14, {size: SIZE.md, weight: 500, max: inner.w - 190});
