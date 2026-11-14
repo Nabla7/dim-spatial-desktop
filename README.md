@@ -90,6 +90,7 @@ RPCs that the blueprint's own start-up calls (`deliver_*`) fold away under the o
 | the blueprint has | Control shows |
 |---|---|
 | a `Twist` stream a module reads | **DRIVE**: a pad, keys `W S` (forward, back) `A D` (turn) `Q E` (slide), `Space` stops; in a headset the left stick moves and the right stick turns |
+| paired `webxr_pose: PoseStamped` and `webxr_joy: Joy` inputs | **HEADSET**: tracked controller poses and buttons through the blueprint's existing teleop backend |
 | `Float32`, `Int32`, `Bool` streams | **SET**: a slider or a switch (below) |
 | a `PoseStamped` or `PointStamped` navigation goal | **SET**: POINT AT IT, then press a place on the table |
 | a `JointState` command stream, or an RPC `(name: str, position: float)` | **JOINTS**: a slider per joint over its limits, with the measured position marked |
@@ -108,6 +109,28 @@ sends zero on every drive stream. Closing the panel makes the controls safe.
 One app at a time may command a robot (the gateway's lease). The first command takes it, also from
 another app such as Controller; if another app takes it back, the panel says so and your next press
 takes it again.
+
+### Tracked arm control in VR
+
+Enter **VR** or **MIXED**, then **CONTROL → ARM THE CONTROLS → HEADSET → ENABLE HEADSET ARMS**.
+The page selects `webxr` through the blueprint's source-selection RPC when provided. Release the
+grips and triggers first. For the bimanual backend, hold **both** middle-finger grips to move
+the arms. Release either to hold both arms while repositioning your controllers. In the arm teleop backend, the index trigger
+closes that gripper while its grip is held; releasing the trigger opens it. Hold the right stick
+button to drive using the backend's stick mapping. Ordinary panel driving is suspended in this mode.
+
+Grips belong to teleop while this mode is on, so they cannot also grab the world or panels. Release
+grips to click UI with a trigger. A grip first pressed over a panel cannot engage an arm until released.
+**STOP**, **SAFE**, closing Control, leaving VR, losing the command lease or hiding the XR session
+ends headset control. Lost tracking releases the affected hand and requires a fresh grip release.
+Reconnecting does not automatically enable it. **USE LEADER INPUT**, when offered by the blueprint,
+explicitly returns to the leaders; stopping headset input alone never switches devices.
+
+The page sends raw grip-space poses and the existing WebXR button layout over its leased DimOS
+connection. Each hand has its own latest-message publisher and a neutral-button deadman. Conversion
+to robot coordinates, arm reference capture, IK, motion limits and recording stay in the backend.
+Moving, turning or scaling the hologram does not change the tracking data. This path has browser
+unit tests; physical headset-to-robot motion still needs operator testing.
 
 ## Recording episodes
 

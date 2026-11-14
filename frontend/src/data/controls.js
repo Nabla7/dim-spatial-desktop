@@ -7,6 +7,7 @@
 // gateway that it sends by itself if this page goes away (the deadman).
 import {gateway} from './gateway.js';
 import {MotionSpeeds} from './motion-speeds.js';
+import {XRControls} from './xr-controls.js';
 
 const DRIVE = ['geometry_msgs.Twist', 'geometry_msgs.TwistStamped'];
 const NUMBER = ['std_msgs.Float32', 'std_msgs.Int32', 'std_msgs.Int8', 'std_msgs.UInt32'];
@@ -52,6 +53,7 @@ export class Controls extends EventTarget {
     this.ranges = this.load('spatial.ranges'); this.pins = this.load('spatial.pins'); this.modes = this.load('spatial.modes');
     this.heldNumbers = new Map(); this.zeroing = [];
     this.held = new Set();
+    this.xr = new XRControls(this);
     app.blueprint.addEventListener('modules', () => this.discover());
     addEventListener('keydown', event => this.key(event, true));
     addEventListener('keyup', event => this.key(event, false));
@@ -68,6 +70,7 @@ export class Controls extends EventTarget {
   discover() {
     const blueprint = this.app.blueprint, found = new Map();
     this.motionSpeeds.discover(blueprint.modules);
+    this.xr.discover(blueprint.modules);
     for (const module of blueprint.modules) for (const stream of module.streams) {
       if (!stream.key || !stream.type) continue;
       if (!found.has(stream.key)) found.set(stream.key, {key: stream.key, topic: stream.topic, type: stream.type, readers: [], writers: []});
@@ -99,7 +102,7 @@ export class Controls extends EventTarget {
     this.emit();
   }
 
-  get any() { return this.drives.length + this.numbers.length + this.switches.length + this.goals.length + this.joints.length + this.actions.length > 0; }
+  get any() { return this.xr.available || this.drives.length + this.numbers.length + this.switches.length + this.goals.length + this.joints.length + this.actions.length > 0; }
 
   get settingNumbers() { const keys = this.motionSpeeds.keys; return this.numbers.filter(target => !keys.has(target.key)); }
 
@@ -125,6 +128,7 @@ export class Controls extends EventTarget {
 
   disarm() {
     const was = this.armed;
+    this.xr.stop();
     this.armed = false; this.aiming = null; this.held.clear();
     for (const input of Object.values(this.inputs)) input.fill(0);
     if (this.moving) { this.send([0, 0, 0]); this.moving = false; }
@@ -140,6 +144,7 @@ export class Controls extends EventTarget {
 
   // Stop everything that moves by velocity, armed or not.
   stop() {
+    this.xr.stop();
     for (const input of Object.values(this.inputs)) input.fill(0);
     this.held.clear(); this.heldNumbers.clear();
     // A stop is worth taking the controls for, from whoever has them. Unarmed, they are given back right after.
@@ -148,7 +153,7 @@ export class Controls extends EventTarget {
     this.stopping = false;
     if (!this.armed) setTimeout(() => { if (!this.armed) this.releaseLease(); }, 1000);
     this.moving = false; this.command = [0, 0, 0];
-    this.app.toast('Stop sent on every drive stream', 'warn');
+    this.app.toast('Headset arms stopped; stop sent on every drive stream', 'warn');
     this.emit();
   }
 
@@ -160,8 +165,8 @@ export class Controls extends EventTarget {
     this.lastCommandAt = now;
     if (!this.armed && !this.stopping) return null;            // only armed controls, or STOP, may take the robot from another app
     if (typeof client?.lease !== 'function') return null;     // a gateway from before leases: nothing to take
-    const added = !lease.keys.includes(key);
-    if (added) lease.keys = [...lease.keys, key].sort();
+    const keys = Array.isArray(key) ? key : [key], added = keys.some(key => !lease.keys.includes(key));
+    if (added) lease.keys = [...new Set([...lease.keys, ...keys])].sort();
     if (lease.status === 'taking') { lease.again ||= added; return lease.taking; }
     if (lease.status === 'held' && !added) return null;
     if ((lease.status === 'takenOver' || lease.status === 'refused') && idle < RETAKE_AFTER_IDLE_MS && !added) return null;
@@ -205,8 +210,10 @@ export class Controls extends EventTarget {
 
   // -- publishing -----------------------------------------------------------------------------------
   entry(target) {
-    let entry = this.publishers.get(target.key);
-    if (!entry) { entry = {publisher: this.bus.publisher(target.key, {delivery: DRIVE.includes(target.type) ? 'latest' : 'reliable'}), deadman: false}; this.publishers.set(target.key, entry); }
+    const id = target.publisherKey || target.key;
+    let entry = this.publishers.get(id);
+    if (entry && ['closed', 'tripped', 'rejected'].includes(entry.publisher.state)) { entry.publisher.close(); this.publishers.delete(id); entry = null; }
+    if (!entry) { entry = {publisher: this.bus.publisher(target.key, target.options || {delivery: DRIVE.includes(target.type) ? 'latest' : 'reliable'}), deadman: false}; this.publishers.set(id, entry); }
     return entry;
   }
 
@@ -214,6 +221,12 @@ export class Controls extends EventTarget {
     if (!bytes || !this.bus.live) return false;
     const entry = this.entry(target), put = () => { try { entry.publisher.put(bytes); } catch (error) { console.warn(`publish ${target.topic}:`, error.message); } };
     const taking = this.claim(target.key);
+    // Live tracking never waits in a promise and replays old poses after a lease/reconnect.
+    if (target.live) {
+      if (!this.armed || taking || this.lease.status !== 'held' || entry.publisher.state !== 'open' || entry.publisher.blocked ||
+          entry.publisher.channel?.readyState !== 'open' || entry.publisher.channel.bufferedAmount > 16384) return false;
+      put(); return true;
+    }
     // A stream of velocity commands goes out at once (the next one is 66 ms away); a single command waits for the lease.
     if (taking && !DRIVE.includes(target.type)) taking.then(put); else put();
     return true;
@@ -232,6 +245,7 @@ export class Controls extends EventTarget {
   // Pad, keys and sticks each hold an input (forward, left, turn-left; each -1..1). The largest wins per axis.
   setInput(source, forward, left, turn) {
     if (!this.armed) return;
+    if (this.xr.ownsInputs) forward = left = turn = 0;
     const input = this.inputs[source];
     if (input[0] === forward && input[1] === left && input[2] === turn) return;
     input[0] = forward; input[1] = left; input[2] = turn; this.emit();
@@ -254,6 +268,7 @@ export class Controls extends EventTarget {
 
   // Headset sticks: left stick moves, right stick turns. Returns whether the sticks are taken (armed with a drive).
   sticks(left, right) {
+    if (this.xr.ownsInputs) { this.setInput('sticks', 0, 0, 0); return true; }
     if (!this.armed || !this.drive) return false;
     this.setInput('sticks', -left[1], -left[0], -right[0]);
     return true;

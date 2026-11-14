@@ -84,6 +84,7 @@ export class App extends EventTarget {
     this.replay.addEventListener('open', () => this.scenes.close());
     this.pointers.onTablePoint = point => this.controls.place(point);
     this.pointers.driveSticks = (left, right) => this.controls.sticks(left, right);
+    this.pointers.teleopOwnsInputs = () => this.controls.xr.ownsInputs;
     this.toasts = []; this.selected = null; this.last = performance.now();
 
     openShell(this);
@@ -238,10 +239,12 @@ export class App extends EventTarget {
     this.dock.setMode('room');
     this.backdrop.setPassthrough(this.xr.passthrough);
     this.pointers.bindSession(session, this.renderer.xr.getReferenceSpace());
-    this.renderer.xr.getReferenceSpace().addEventListener?.('reset', () => this.xr.recenter());
+    this.renderer.xr.getReferenceSpace().addEventListener?.('reset', () => { this.controls.xr.stop(); this.xr.recenter(); });
+    session.addEventListener('visibilitychange', () => { if (session.visibilityState !== 'visible') this.controls.disarm(); });
   }
 
   onSessionEnd() {
+    this.controls.disarm();
     if (this.sceneView.walk.on) this.sceneView.leave();
     this.orbit.enabled = true;
     this.dock.setMode('hud');
@@ -273,6 +276,7 @@ export class App extends EventTarget {
     else if (!this.sceneView.walk.on) this.orbit.update();   // a viewer inside a scene holds the camera
     this.stage.update(time / 1000, dt);
     this.pointers.update(dt, xrFrame, this.theme.three.primary);
+    this.controls.xr.frame(xrFrame, this.renderer.xr.getReferenceSpace(), now);
     this.controls.tick(now);
     this.replay.tick(now, dt);
     // A scene or a replayed episode has the table: the live layers wait until it is closed.

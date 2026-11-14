@@ -75,6 +75,7 @@ frontend/src/app.js         App: renderer, stage, dock, pointers, bus, blueprint
   data/bus.js               zenoh-gateway client + msgs.js; key and type helpers; files.File decoder
   data/blueprint.js         the live model: modules, RPCs, streams, topics, rates, process stats
   data/controls.js          what can be commanded, found from the blueprint; arming, the lease, the deadman
+  data/xr-controls.js       WebXR input protocol discovery, controller poses/buttons, explicit source handover and grip release gates
   data/episodes.js          episodes for training: the episode control and its recorders, found by the Spec; status, commands
   data/launch.js            what a launch has to be told: required fields with no value, a session's task and folder
   data/agents.js, cbor.js   chat backends (a session agent per coding agent, the blueprint's own agent)

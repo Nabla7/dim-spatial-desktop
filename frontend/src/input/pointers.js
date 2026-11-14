@@ -265,14 +265,24 @@ export class Pointers {
   }
 
   // -- XR -------------------------------------------------------------------------------------------
+  cancelGrabs() {
+    for (const pointer of this.sources.values()) if (pointer.down) this.release(pointer);
+    this.worldGrabs.clear(); this.twoHand = null;
+  }
+
   bindSession(session, reference) {
     this.reference = reference;
     const source = event => this.sourcePointer(event.inputSource, event.frame);
-    session.addEventListener('selectstart', event => { const pointer = source(event); this.hover(pointer, this.cast(pointer)); this.press(pointer); });
-    session.addEventListener('selectend', event => { const pointer = source(event); if (pointer.kind !== 'gaze') this.hover(pointer, this.cast(pointer)); this.release(pointer); });
+    session.addEventListener('selectstart', event => {
+      const pointer = source(event); this.hover(pointer, this.cast(pointer));
+      // A trigger while gripping belongs to the robot gripper, never to a panel behind its ray.
+      if (this.teleopOwnsInputs?.() && (event.inputSource.gamepad?.buttons[1]?.value > 0.5 || pointer.hit?.type !== 'panel')) return;
+      this.press(pointer);
+    });
+    session.addEventListener('selectend', event => { const pointer = source(event); if (pointer.kind !== 'gaze') this.hover(pointer, this.cast(pointer)); if (pointer.down) this.release(pointer); });
     // The grip button takes hold of whatever the ray is on: a panel anywhere on its face, else the world.
-    session.addEventListener('squeezestart', event => { const pointer = source(event); this.hover(pointer, this.cast(pointer)); pointer.squeezing = true; this.press(pointer, {grabOnly: true}); });
-    session.addEventListener('squeezeend', event => { const pointer = source(event); pointer.squeezing = false; this.release(pointer); });
+    session.addEventListener('squeezestart', event => { if (this.teleopOwnsInputs?.()) return; const pointer = source(event); this.hover(pointer, this.cast(pointer)); pointer.squeezing = true; this.press(pointer, {grabOnly: true}); });
+    session.addEventListener('squeezeend', event => { const pointer = source(event); if (!pointer.squeezing) return; pointer.squeezing = false; this.release(pointer); });
     session.addEventListener('inputsourceschange', event => { for (const removed of event.removed) this.dropSource(removed); });
     session.addEventListener('end', () => { for (const input of [...this.sources.keys()]) this.dropSource(input); this.worldGrabs.clear(); this.twoHand = null; });
   }
