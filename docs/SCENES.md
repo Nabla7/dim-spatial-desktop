@@ -55,7 +55,8 @@ The tool that made a scene is free. The USD and the checks below are the contrac
 - `forms` are the other forms. `source_sha256` is the hash of what a form was made from: the source, or
   another form (a chain is fine).
 - `places` are points on the floor where a robot can stand. The first is where a run starts. The others
-  are where a robot can be sent.
+  are where a robot can be sent. A place may give a `heading` in degrees about the vertical axis: which
+  way a robot that starts there looks.
 - `body` is the smallest promise the scene makes: a robot no larger than this gets to every place. It is
   an upright cylinder that floats `step` above the floor, so it passes what is lower and nothing higher.
 - `evidence` names what the scene was reconstructed from, as recorded views (below). A scene that was
@@ -168,6 +169,27 @@ document, is what makes the next scene fit.
 
 In Spatial Desktop the same check runs from the SCENES panel (CHECK THE SCENE), which draws the reached
 floor and the points of disagreement on the scene and hands the failures to an agent.
+
+## A robot in a scene
+
+A scene holds no robot. A run puts one in:
+
+```sh
+# A MuJoCo (MJCF) environment as a scene: a USD with no robot in it, and a free place to stand.
+python -m dimos.sim2.scenes.mjcf <scene.xml or its folder> --output <scene folder> --near 0 0
+# The robot of a sim2 blueprint at a place of a scene: the file a launch is given.
+python -m dimos.sim2.scenes.compose --blueprint <name> --environment <scene.usda> \
+    --place X Y HEADING --floor Z --output <file.usda>
+dimos run <name> --usdmanager.model <file.usda>
+```
+
+The second command needs nothing stated for a robot. A sim2 blueprint serves one USD that holds its robot
+and the surroundings it was authored with, and it names the joints its simulation drives: the part of
+that USD which holds those joints is the robot, with its drives and collision rules. That part is stood
+at the place; the rest of the blueprint's own scene is left behind.
+
+Spatial Desktop runs the first command when a MuJoCo scene is added (it writes the manifest, with the
+place found), and the second when a blueprint is launched in a scene.
 
 ## Not decided
 

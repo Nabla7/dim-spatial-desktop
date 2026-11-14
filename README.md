@@ -215,6 +215,17 @@ says what it was made from ([docs/SCENES.md](docs/SCENES.md) proposes what a sce
 checked). Scenes whose manifest is under Desktop's app data are found by themselves. Any other is added by
 the path of its manifest, of a USD file, or of a folder that holds one.
 
+A **MuJoCo scene** (an MJCF file, or a folder with `scene.xml`) is added the same way and is converted on
+the way in: Desktop's dimos writes it as a USD with no robot in it, and the app keeps that with a manifest
+whose first place is free floor near where the source says a robot starts. A scene takes a few seconds.
+Naming the same file again converts it again.
+
+**RUN A ROBOT HERE** opens the Blueprint panel on the blueprints that simulate, with the open scene chosen.
+The launch card of such a blueprint has a row for **the scene the robot stands in**: its own, or any scene
+of the library. On LAUNCH the app asks dimos to take the blueprint's robot out of its own scene and stand
+it at the scene's first place, and gives the launch that file. Nothing is stated for a robot: the
+blueprint names its scene and the joints it drives.
+
 What is on the table is derived from the USD and from nothing else, so it is what a simulator gets: the
 visible shapes with their materials, without the robots a scene file may hold.
 

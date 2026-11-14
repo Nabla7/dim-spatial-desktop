@@ -100,7 +100,10 @@ export const gateway = {
   // -- this app's own server: USD scenes to walk through, check, mark and hand to an agent ---------------
   scenes: {
     list: (rescan = false) => request(`api/scenes/library${rescan ? '?rescan=1' : ''}`, {timeout: 90000}),
-    add: path => request('api/scenes/library', {method: 'POST', body: {path}, timeout: 90000}),
+    // A MuJoCo scene is converted on the way in, which takes longer than reading a manifest.
+    add: path => request('api/scenes/library', {method: 'POST', body: {path}, timeout: 900000}),
+    // The file a launch is given: this scene with the blueprint's robot at its first place.
+    compose: (id, blueprint) => request(`api/scenes/library/${segment(id)}/compose`, {method: 'POST', body: {blueprint}, timeout: 900000}),
     scene: (id, revision = null) => request(`api/scenes/library/${segment(id)}${revision == null ? '' : `?revision=${revision}`}`, {timeout: 120000}),
     view: (id, revision, start = false) => request(`api/scenes/library/${segment(id)}/revisions/${revision}/view`, start ? {method: 'POST', body: {}} : {}),
     // Where a file of the derived view is served from (the GLB names its images relative to itself).

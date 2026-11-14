@@ -49,3 +49,11 @@ export function launchConfig(asks, values) {
 
 // What is still missing: the required fields with nothing in them.
 export const missing = (asks, values) => asks.filter(ask => ask.required && !String(values[ask.key] ?? '').trim());
+
+// The module that serves the scene of a sim2 blueprint, or null. Such a blueprint can stand its robot
+// in another scene: the launch gives that module the file to serve in place of its own.
+export function sceneModule(config) {
+  const modules = Object.entries(config?.modules || {});
+  if (!modules.some(([, described]) => /\.SimModule$/.test(described.class || ''))) return null;
+  return modules.find(([, described]) => /\.UsdManager$/.test(described.class || '') && described.args?.model)?.[0] ?? null;
+}

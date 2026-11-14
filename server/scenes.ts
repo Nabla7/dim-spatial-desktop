@@ -5,6 +5,9 @@
 // draws by scenes/derive.py and checking by scenes/check.py: Python processes run with a dimos checkout's
 // Python that has OpenUSD and MuJoCo's USD importer, so a scene is read by the loader sim2 itself uses.
 // Nothing here writes into a scene's folder: what is made is kept under this app's own data folder.
+// A MuJoCo scene (MJCF) is taken in as a scene of its own: Desktop's dimos converts it to a USD with no
+// robot in it, kept under `scenes/imported` with a manifest. To run a robot in a scene, the same dimos
+// puts the robot of a sim2 blueprint in it and the launch is given that file.
 import { type Answer, container, dirname, exists, follow, home, type Job, json, PythonWorker, readJson, type Runtime, shortHash } from "./worker.ts";
 
 export type ScenesApp = { dataDir?: string; dimosDir?: string; dimosPython?: string };
@@ -24,6 +27,8 @@ const PROBE = "import importlib, pxr, mujoco\nimportlib.import_module('mujoco._u
 
 // What is derived from a scene's revisions is kept for this many of them, the ones used last.
 const KEPT = 6;
+// The body an imported scene promises room for at its start place: a wheeled robot with two arms.
+const IMPORT_BODY: Body = { radius: 0.45, height: 1.7, step: 0.05 };
 
 const bodyKey = (body: Body) => `r${body.radius}-h${body.height}-s${body.step}`;
 
@@ -119,7 +124,7 @@ export class Scenes {
   async list(rescan = false): Promise<Scene[]> {
     if (!rescan && Date.now() - this.#scanned < 30_000) return this.#scenes;
     const root = this.#app.dataDir ? dirname(this.#app.dataDir) : null, scenes = new Map<string, Scene>();
-    if (root) for (const manifest of await this.#search(root)) { const scene = await this.#scene(manifest, false, root); if (scene) scenes.set(scene.id, scene); }
+    if (root) for (const manifest of [...await this.#search(root), ...await this.#imported()]) { const scene = await this.#scene(manifest, false, root); if (scene) scenes.set(scene.id, scene); }
     for (const path of await this.#added()) { const scene = await this.#scene(path, true, root); if (scene && !scenes.has(scene.id)) scenes.set(scene.id, scene); }
     this.#scenes = [...scenes.values()].sort((a, b) => a.name.localeCompare(b.name));
     this.#scanned = Date.now();
@@ -130,12 +135,79 @@ export class Scenes {
   async add(given: string): Promise<{ scenes: Scene[]; added: string }> {
     const path = home(given);
     if (!path.startsWith("/")) throw new Error("give the full path, starting with /");
+    const mujoco = /\.xml$/i.test(path) ? path : await exists(`${path}/scene.xml`) && !await exists(`${path}/scene.usda`) ? `${path}/scene.xml` : null;
+    if (mujoco) {
+      const scene = await this.#scene(await this.#import(mujoco), false, this.#app.dataDir ? dirname(this.#app.dataDir) : null);
+      if (!scene) throw new Error("the scene was converted, but what was written cannot be read as a scene");
+      return { scenes: await this.list(true), added: scene.id };
+    }
     const scene = await this.#scene(path, true, null);
     if (!scene) throw new Error("no scene there: name a scene.json, a USD file, or a folder that holds a scene.json or one USD file");
     const paths = [...new Set([...(await this.#added()), path])];
     await Deno.mkdir(this.#store, { recursive: true });
     await Deno.writeTextFile(`${this.#store}/added.json`, JSON.stringify({ paths }));
     return { scenes: await this.list(true), added: scene.id };
+  }
+
+  // -- scenes taken in from MuJoCo, and a robot put in a scene ----------------------------------------------
+  // The manifests of the scenes this app converted. Listed by name: a store of many is not searched.
+  async #imported(): Promise<string[]> {
+    const found: string[] = [];
+    if (!this.#app.dataDir) return found;
+    try { for await (const entry of Deno.readDir(`${this.#store}/imported`)) if (entry.isDirectory && await exists(`${this.#store}/imported/${entry.name}/scene.json`)) found.push(`${this.#store}/imported/${entry.name}/scene.json`); } catch { /* none yet */ }
+    return found;
+  }
+
+  // Desktop's own dimos: it is the one that launches, so what it converts and composes is what it runs.
+  async #dimos(module: string, args: string[]): Promise<string> {
+    // Desktop names its dimos checkout; the Python is the one in that checkout's environment unless named.
+    const python = this.#app.dimosPython ?? (this.#app.dimosDir && await exists(`${this.#app.dimosDir}/.venv/bin/python`) ? `${this.#app.dimosDir}/.venv/bin/python` : null);
+    if (!python) throw new Error("Desktop did not say where its dimos is, so a scene cannot be converted or given a robot");
+    const run = await new Deno.Command(python, { args: ["-m", module, ...args], cwd: this.#app.dimosDir ?? "/", stdin: "null", stdout: "piped", stderr: "piped", signal: AbortSignal.timeout(900_000) }).output();
+    const out = new TextDecoder().decode(run.stdout).trim().split("\n"), err = new TextDecoder().decode(run.stderr).trim().split("\n");
+    if (!run.success) throw new Error(err.filter((line) => /Error|error:/.test(line)).pop() ?? err.pop() ?? `${module} failed`);
+    return out.pop() ?? "";
+  }
+
+  // An MJCF file becomes a scene of this library: a USD with no robot in it, and a manifest whose first
+  // place is free floor for IMPORT_BODY near where the source says a robot starts. Naming the same file
+  // again converts it again, with the converter dimos has now.
+  async #import(xml: string): Promise<string> {
+    if (!await exists(xml)) throw new Error(`no file at ${xml}`);
+    const name = (/\/scene\.xml$/i.test(xml) ? dirname(xml) : xml.replace(/\.xml$/i, "")).split("/").pop()!.replace(/[^A-Za-z0-9._-]/g, "_");
+    const folder = `${this.#store}/imported/${name}`, manifest = `${folder}/scene.json`;
+    const sha = [...new Uint8Array(await crypto.subtle.digest("SHA-256", await Deno.readFile(xml)))].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    // A scene directory may say where a robot starts (PimSim's sidecar): look for free floor from there.
+    const spawn = Object.values((await readJson(`${dirname(xml)}/scene.json`))?.spawns ?? {})[0] as { position?: number[]; quaternion_xyzw?: number[] } | undefined;
+    const [x, y] = spawn?.position ?? [0, 0], [qx, qy, qz, qw] = spawn?.quaternion_xyzw ?? [0, 0, 0, 1];
+    const heading = Math.atan2(2 * (qw * qz + qx * qy), 1 - 2 * (qy * qy + qz * qz)) * 180 / Math.PI;
+    await Deno.remove(folder, { recursive: true }).catch(() => {});
+    await Deno.mkdir(folder, { recursive: true });
+    const report = JSON.parse(await this.#dimos("dimos.sim2.scenes.mjcf", [xml, "--output", folder, "--near", String(x), String(y), "--radius", String(IMPORT_BODY.radius), "--height", String(IMPORT_BODY.height)]));
+    await Deno.writeTextFile(manifest, JSON.stringify({
+      standard: "dimos.scene/0", name, scene: "scene.usda",
+      source: { file: xml, sha256: sha },
+      places: report.place ? [{ name: "start", position: report.place, heading: Math.round(heading) }] : [],
+      body: IMPORT_BODY,
+      // What the conversion could not carry over, for whoever reads the manifest.
+      ...(report.welded?.length || report.skipped?.length ? { conversion: { welded: report.welded, skipped: report.skipped } } : {}),
+    }, null, 2));
+    return manifest;
+  }
+
+  // The scene with the robot of a sim2 blueprint standing at its first place: a file a launch is given.
+  async compose(scene: Scene, blueprint: string): Promise<{ usd: string; place: unknown }> {
+    if (!/^[A-Za-z0-9_-]+$/.test(blueprint)) throw new Error("name a blueprint");
+    const record = scene.manifest ? await readJson(scene.manifest) : null, place = record?.places?.[0] ?? null;
+    const [x, y, floor] = Array.isArray(place?.position) ? place.position : [0, 0, 0];
+    const usd = `${this.#store}/cache/composed/${scene.id}-${blueprint}.usda`;
+    const made = (await Deno.stat(usd).catch(() => null))?.mtime?.getTime() ?? 0;
+    const changed = Math.max(scene.at, (scene.manifest ? await Deno.stat(scene.manifest).catch(() => null) : null)?.mtime?.getTime() ?? 0);
+    if (made <= changed) {
+      await Deno.mkdir(dirname(usd), { recursive: true });
+      await this.#dimos("dimos.sim2.scenes.compose", ["--blueprint", blueprint, "--environment", scene.usd, "--place", String(x), String(y), String(Number(place?.heading) || 0), "--floor", String(floor ?? 0), "--output", usd]);
+    }
+    return { usd, place };
   }
 
   async #find(id: string): Promise<Scene> {
@@ -447,6 +519,7 @@ export class Scenes {
       const id = parts[1] ?? "", what = parts[2];
       if (!what && method === "GET") { const wanted = url.searchParams.get("revision"); return json(await this.describe(id, wanted === null ? null : Number(wanted))); }
       const scene = await this.#find(id);
+      if (what === "compose" && method === "POST") return json(await this.compose(scene, String(body.blueprint ?? "")));
       if (what === "pins") {
         if (parts.length === 3 && method === "GET") return json({ pins: await this.pins(scene) });
         if (parts.length === 3 && method === "POST") return json({ pins: await this.pin(scene, body) });
