@@ -16,7 +16,11 @@ export class Feeds {
     texture.colorSpace = THREE.SRGBColorSpace; texture.generateMipmaps = false; texture.minFilter = THREE.LinearFilter;
     feed = {key: topic.key, video, texture, users: 1, frameId: '', lastAt: 0, width: 0, height: 0, error: null};
     const encoding = topic.type === 'sensor_msgs.CompressedImage' ? 'dimos_lcm_compressed_image' : 'dimos_lcm_image';
-    feed.subscription = this.bus.subscribe(topic.key, {delivery: 'latest', encoding}, message => {
+    // Bound each camera's bandwidth demand instead of letting full-resolution
+    // sources request tens of Mb/s. Keep their pixels; adapt compression first.
+    feed.subscription = this.bus.subscribe(topic.key, {
+      delivery: 'latest', encoding, maxBitrate: 5_000_000, minResolutionScale: 1,
+    }, message => {
       if (message.mediaStream && video.srcObject !== message.mediaStream) { video.srcObject = message.mediaStream; video.play().catch(() => {}); }
       if (message.header?.frameId) feed.frameId = message.header.frameId;
       feed.lastAt = performance.now();
