@@ -73,8 +73,11 @@ export class Layers extends EventTarget {
       const info = named(topic, [name.replace(/_depth.*/i, '_info'), name.replace(/depth_image.*/i, 'camera_info'), `${parent}camera_info`, name.replace(/depth/i, 'color').replace(/[^/]*$/, 'camera_info')], isInfo)
         || inModule(topic, isInfo);
       if (!info) continue;
+      // The colour camera's own intrinsics, by its name (/head_left_color + /head_left_color_info), when
+      // they are not the depth image's: its picture is then put on the surface through that camera.
+      const own = color && named(color, [color.topic.replace(/(_image)?$/, '_info'), color.topic.replace(/[^/]*$/, 'camera_info')], isInfo);
       paired.add(topic.key); if (color) paired.add(color.key);
-      add(`rgbd:${topic.key}`, () => new RgbdLayer(this, {depth: topic, color, info}), true);
+      add(`rgbd:${topic.key}`, () => new RgbdLayer(this, {depth: topic, color, info, colorInfo: own && own !== info ? own : null}), true);
     }
     for (const topic of topics) {
       if (topic.type === 'sensor_msgs.PointCloud2') add(topic.key, () => new CloudLayer(this, topic), !/raw/i.test(topic.topic));
