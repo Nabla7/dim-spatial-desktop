@@ -88,18 +88,26 @@ export function openControl(app) {
     ui.button(area.cutTop(48, 12), xr.busy ? 'CONNECTING…' : xr.enabled ? 'STOP HEADSET ARMS' : 'ENABLE HEADSET ARMS',
       () => owns ? xr.stop() : xr.start(), {id: 'xr:enable', enabled: owns || (controls.armed && app.xr.presenting), tone: owns ? 'warn' : 'primary', on: owns, size: SIZE.sm});
     const note = !controls.armed ? 'Arm the controls first.' : !app.xr.presenting ? 'Enter VR or MIXED to use tracked controllers.' :
-      xr.error || (xr.enabled ? 'Headset input selected. Release each grip before engaging.' : 'Enable to select headset input for the robot.');
+      xr.error || (!xr.enabled ? 'Enable to select headset input for the robot.' : xr.mode === 'hands' ? (xr.targets.pad && app.pointers.padInfo.length ? 'Your hands are selected. The gamepad you hold is the robot\'s; a hand that points at a panel keeps its trigger and stick for the panel.' : 'Your hands are selected. The enable button you hold starts and stops the arms.') : 'Headset input selected. Release each grip before engaging.');
     const used = ui.wrap(note, new Rect(area.x, area.y, area.w, 0), {size: SIZE.sm, color: ui.tone(xr.error ? 'danger' : 'muted'), maxLines: 3});
     area.cutTop(used + 16, 0);
     for (const side of ['left', 'right']) {
-      const hand = xr.hands[side], status = !xr.enabled ? 'OFF' : !hand.tracked ? 'NO TRACKING' : !hand.released ? 'RELEASE GRIP / TRIGGER' : hand.engaged ? 'GRIP HELD' : 'HOLD BOTH GRIPS TO MOVE';
-      ui.text(`${side.toUpperCase()} · ${status}`, area.x, area.cutTop(30, 6).cy, {size: SIZE.sm, color: ui.tone(hand.engaged ? 'ok' : 'muted'), max: area.w});
+      const hand = xr.hands[side], hands = xr.enabled && xr.mode === 'hands';
+      const status = !xr.enabled ? 'OFF' : !hand.tracked ? 'NO TRACKING' : hands ? 'HAND TRACKED' : !hand.released ? 'RELEASE GRIP / TRIGGER' : hand.engaged ? 'GRIP HELD' : 'HOLD BOTH GRIPS TO MOVE';
+      ui.text(`${side.toUpperCase()} · ${status}`, area.x, area.cutTop(30, 6).cy, {size: SIZE.sm, color: ui.tone(hand.engaged || (hands && hand.tracked) ? 'ok' : 'muted'), max: area.w});
     }
-    const help = 'Hold BOTH middle-finger grips, then move the controllers to move the arms. Release either grip to hold both arms and reposition your hands. While gripping, the index trigger closes the gripper; release opens it.\n\nHold the right stick down to drive with the sticks. Release grips to click panels. STOP or making controls SAFE ends headset arm control.';
+    // A gamepad the browser has, and the buttons it says are down: what the page reads of it can be seen.
+    for (const pad of app.pointers.padInfo) {
+      const pressed = pad.pressed.length ? ` · BUTTON ${pad.pressed.join(', ')}` : '';
+      ui.text(`GAMEPAD · ${pad.id}${pressed}`, area.x, area.cutTop(30, 6).cy, {size: SIZE.sm, color: ui.tone(pad.hands ? 'ok' : 'warn'), max: area.w});
+    }
+    const usesHands = xr.enabled ? xr.mode === 'hands' : [...(app.xr.session?.inputSources ?? [])].some(input => input.hand);
+    const help = usesHands ? 'Point with your hands. Gamepad triggers (ZL / ZR) or the primary face button select panels without pinching. Shoulder buttons grab panels in desktop mode.\n\nAfter enabling teleop, release all buttons, then use the robot’s enable control. Panel clicks stay with the desktop until released. STOP or making controls SAFE returns to desktop interaction.' :
+      'Hold BOTH middle-finger grips, then move the controllers to move the arms. Release either grip to hold both arms and reposition your hands. While gripping, the index trigger closes the gripper; release opens it.\n\nHold the right stick down to drive with the sticks. Release grips to click panels. STOP or making controls SAFE ends headset arm control.';
     const height = ui.wrap(help, new Rect(area.x, area.y + 8, area.w, 0), {size: SIZE.sm, maxLines: 12, lineHeight: 1.45});
     area.cutTop(height + 24, 0);
     const choices = xr.binding?.selector?.rpcs.find(rpc => rpc.name === 'select_teleop_source')?.params.find(param => param.name === 'source')?.choices || [];
-    for (const source of choices.filter(source => source !== 'webxr')) ui.button(area.cutTop(40, 8), `USE ${String(source).toUpperCase()} INPUT`, () => xr.selectSource(source), {id: `xr:source:${source}`, enabled: controls.armed && !xr.busy, tone: 'muted', size: SIZE.sm});
+    for (const source of choices.filter(source => source !== 'webxr' && source !== 'hands')) ui.button(area.cutTop(40, 8), `USE ${String(source).toUpperCase()} INPUT`, () => xr.selectSource(source), {id: `xr:source:${source}`, enabled: controls.armed && !xr.busy, tone: 'muted', size: SIZE.sm});
   }
 
   function drawSet(ui, inner) {

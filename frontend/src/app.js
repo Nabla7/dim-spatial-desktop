@@ -85,6 +85,17 @@ export class App extends EventTarget {
     this.pointers.onTablePoint = point => this.controls.place(point);
     this.pointers.driveSticks = (left, right) => this.controls.sticks(left, right);
     this.pointers.teleopOwnsInputs = () => this.controls.xr.ownsInputs;
+    // A gamepad the browser has: say once what each one is read as; panels that show them draw again.
+    this.pointers.onPads = (pads, added, gone) => {
+      const where = this.xr.presenting ? '' : ' In the headset view';
+      for (const pad of added) {
+        this.toast(pad.hands ? `Gamepad ${pad.id} found (${pad.hands}).${where || ' Now'}: trigger or primary face button selects, shoulder grabs, sticks move.`
+          : `Gamepad ${pad.id}: this layout is not known (${pad.axes} axes, ${pad.buttons} buttons).`, pad.hands ? 'info' : 'warn', 8);
+      }
+      // A pad the browser stops giving (in a headset view, some do) is said too: its buttons then do nothing.
+      for (const pad of gone) this.toast(`Gamepad ${pad.id} is gone: the browser gives it to this page no more.`, 'warn', 8);
+      this.controls.emit();
+    };
     this.toasts = []; this.selected = null; this.last = performance.now();
 
     openShell(this);

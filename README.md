@@ -112,6 +112,20 @@ takes it again.
 
 ### Tracked arm control in VR
 
+On a hand-tracking headset such as Vision Pro, paired Bluetooth gamepads also work as desktop
+controls without arming a robot: point with a tracked hand and use its trigger (ZL/ZR on Joy-Cons)
+to select, or the primary face button. Shoulder buttons grab panels; sticks scroll the pointed-at
+panel or move the view. Separate left/right Joy-Cons remain assigned to their own hands, including
+when Safari reports four axis slots for each. Hand tracking supplies the pointing direction.
+
+**ENABLE HEADSET ARMS** selects the backend's hand-tracking mode on these headsets. Release buttons
+after enabling, then use the backend's enable control. Two separate standard-layout halves are
+combined into the same gamepad input as a paired controller. A button used on a panel cannot also
+command the robot until released. **STOP** or **SAFE** restores desktop interaction.
+
+After an update, exit the immersive session, reload the page and enter it again; updates do not
+reload an active immersive session.
+
 Enter **VR** or **MIXED**, then **CONTROL → ARM THE CONTROLS → HEADSET → ENABLE HEADSET ARMS**.
 The page selects `webxr` through the blueprint's source-selection RPC when provided. Release the
 grips and triggers first. For the bimanual backend, hold **both** middle-finger grips to move

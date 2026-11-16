@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {XRControls, controllerSample, xrBinding} from '../frontend/src/data/xr-controls.js';
+import {XRControls, controllerSample, handSample, headSample, xrBinding} from '../frontend/src/data/xr-controls.js';
 import {Controls} from '../frontend/src/data/controls.js';
 import {gateway} from '../frontend/src/data/gateway.js';
 
@@ -10,7 +10,7 @@ const receiver = {id: 'operator-host:input', streams: [
 ], rpcs: []};
 const selector = {id: 'robot-host:control', streams: [], rpcs: [{name: 'select_teleop_source', params: [{name: 'source', choices: ['leader', 'webxr']}]}]};
 const pose = {transform: {position: {x: 0.2, y: 1.2, z: -0.5}, orientation: {x: 0, y: 0, z: 0, w: 1}}};
-const input = side => ({handedness: side, gripSpace: {side}, gamepad: {mapping: 'xr-standard', axes: [0, 0, 0, 0], buttons: Array.from({length: 7}, () => ({value: 0, pressed: false}))}});
+const input = side => ({handedness: side, targetRayMode: 'tracked-pointer', gripSpace: {side}, gamepad: {mapping: 'xr-standard', axes: [0, 0, 0, 0], buttons: Array.from({length: 7}, () => ({value: 0, pressed: false}))}});
 const grip = (input, value) => { input.gamepad.buttons[1] = {value, pressed: value > 0.5}; };
 
 function setup(t) {
@@ -18,7 +18,7 @@ function setup(t) {
   t.mock.method(gateway, 'callRpc', async (id, name, kwargs) => { calls.push({id, name, kwargs}); return {ok: true, result: {source: kwargs.source}}; });
   const c = {
     armed: false, bus: {live: true}, lease: {status: 'off'}, emit() {}, setInput() {},
-    app: {xr: {presenting: true}, pointers: {sources: new Map(), cancelGrabs() {}}, toast() {}},
+    app: {xr: {presenting: true, session: null}, pointers: {sources: new Map(), cancelGrabs() {}}, toast() {}},
     claim: async () => { c.lease.status = 'held'; },
     entry(target) {
       if (!entries.has(target.publisherKey)) entries.set(target.publisherKey, {publisher: {
@@ -32,6 +32,7 @@ function setup(t) {
   const xr = new XRControls(c); c.xr = xr; xr.discover([receiver, selector]);
   const left = input('left'), right = input('right');
   const frame = {session: {inputSources: [left, right], visibilityState: 'visible'}, getPose: () => pose};
+  c.app.xr.session = frame.session;
   let time = 0;
   return {c, xr, calls, sent, deadmen, entries, frame, left, right,
     tick() { xr.frame(frame, {}, time += 20); },
@@ -146,4 +147,135 @@ test('live poses are dropped while acquiring a lease, with no deferred send afte
   c.armed = true; c.claim = () => null;
   assert.equal(Controls.prototype.publish.call(c, target, 'fresh pose'), true);
   assert.deepEqual(sent, ['fresh pose']);
+});
+
+// A headset with hands and no controllers. A pinch shows as a transient pointer with a gamepad, as on a Vision Pro.
+const tracked = side => ({handedness: side, targetRayMode: 'tracked-pointer', hand: new Map([['wrist', {side}]])});
+const pinch = side => ({handedness: side, targetRayMode: 'transient-pointer', gripSpace: {side}, gamepad: {mapping: '', axes: [], buttons: [{value: 1, pressed: true}]}});
+
+test('a headset with hands alone selects the hands source and sends wrist poses with no buttons', async t => {
+  const s = setup(t), left = tracked('left'), right = tracked('right');
+  // The pinch that presses the button is not a controller, and the backend's listed choices are not asked.
+  s.frame.session.inputSources = [left, right, pinch('right')];
+  s.frame.getJointPose = (space, reference) => ({transform: {position: {x: space.side === 'left' ? -0.2 : 0.2, y: 1.1, z: -0.4}, orientation: {x: 0, y: 0, z: 0, w: 1}}});
+  s.tick();
+  assert.equal(s.sent.length, 0);
+  await s.start();
+  assert.deepEqual(s.calls.map(call => call.kwargs.source), ['hands']);
+  assert.equal(s.xr.mode, 'hands');
+  s.tick();
+  const poses = s.sent.filter(m => m.type === 'geometry_msgs.PoseStamped').map(m => [m.value.header.frame_id, m.value.pose.position.x]);
+  // No backend here takes the head: only the wrists go out.
+  assert.deepEqual(poses, [['left', -0.2], ['right', 0.2]]);
+  for (const side of ['left', 'right']) {
+    assert.deepEqual(s.joy(side).axes, [0, 0, 0, 0]);
+    assert.ok(s.joy(side).buttons.every(button => button === 0));
+    assert.deepEqual([s.xr.hands[side].tracked, s.xr.hands[side].engaged], [true, false]);
+  }
+  // A hand out of view sends no pose: the backend sees it go stale and stops.
+  s.frame.session.inputSources = [right];
+  const before = s.sent.filter(m => m.type === 'geometry_msgs.PoseStamped' && m.value.header.frame_id === 'left').length;
+  s.tick();
+  assert.equal(s.sent.filter(m => m.type === 'geometry_msgs.PoseStamped' && m.value.header.frame_id === 'left').length, before);
+  assert.equal(s.xr.hands.left.tracked, false);
+});
+
+test('a backend that takes the head gets it with the hands, on its own key, and not with controllers', async t => {
+  const taker = {id: 'arm-source', streams: [{name: 'webxr_head', key: 'run/custom/head', direction: 'in', type: 'geometry_msgs.PoseStamped'}], rpcs: []};
+  assert.equal(xrBinding([receiver, selector, taker]).head.key, 'run/custom/head');
+  // Two takers: the page does not choose between them.
+  assert.equal(xrBinding([receiver, selector, taker, {...taker, id: 'another'}]).head, null);
+  const head = {transform: {position: {x: 0.05, y: 1.5, z: 0.1}, orientation: {x: 0, y: 0, z: 0, w: 1}}};
+  for (const [inputs, expected] of [[[tracked('left'), tracked('right')], [['head', 1.5]]], [null, []]]) {
+    const s = setup(t);
+    s.xr.discover([receiver, selector, taker]);
+    if (inputs) s.frame.session.inputSources = inputs;
+    s.frame.getJointPose = () => pose;
+    s.frame.getViewerPose = () => head;
+    await s.start();
+    s.tick();
+    const sent = s.sent.filter(m => m.target.key === 'run/custom/head').map(m => [m.value.header.frame_id, m.value.pose.position.y]);
+    assert.deepEqual(sent, expected);
+  }
+  // A head the headset only guesses at is not sent.
+  assert.equal(headSample({...head, emulatedPosition: true}), null);
+  assert.equal(headSample(null), null);
+});
+
+test('a backend that takes the gamepad gets it with the hands, as it is, less what a hand uses on a panel', async t => {
+  const taker = {id: 'arm-source', streams: [{name: 'webxr_gamepad', key: 'run/custom/pad', direction: 'in', type: 'sensor_msgs.Joy'}], rpcs: []};
+  assert.equal(xrBinding([receiver, selector, taker]).pad.key, 'run/custom/pad');
+  assert.equal(xrBinding([receiver, selector, taker, {...taker, id: 'another'}]).pad, null);
+  assert.equal(xrBinding([receiver, selector]).pad, null);
+  const down = new Set();
+  const pad = {id: 'Joy-Con (L/R)', mapping: 'standard', connected: true, axes: [0.5, -1, 0.25, 0],
+    get buttons() { return Array.from({length: 18}, (_, i) => ({pressed: down.has(i), value: down.has(i) ? 1 : 0})); }};
+  const s = setup(t);
+  s.xr.discover([receiver, selector, taker]);
+  s.xr.gamepads = () => [null, pad];
+  s.frame.session.inputSources = [tracked('left'), tracked('right')];
+  s.frame.getJointPose = () => pose;
+  const sent = () => s.sent.filter(m => m.target.key === 'run/custom/pad').map(m => m.value);
+  s.tick();
+  assert.equal(sent().length, 0);
+  await s.start();
+  // If the page is gone the gateway puts the pad at rest.
+  assert.deepEqual(s.deadmen.filter(m => m.value.header.frame_id === 'standard').map(m => [m.value.axes, m.value.buttons.some(Boolean)]), [[[0, 0, 0, 0], false]]);
+  down.add(3); down.add(6); down.add(7);
+  s.tick();
+  let last = sent().at(-1);
+  assert.equal(last.header.frame_id, 'standard');
+  assert.deepEqual(last.axes, [0.5, -1, 0.25, 0]);
+  assert.deepEqual(last.buttons.flatMap((value, i) => value ? [i] : []), [3, 6, 7]);
+  // The right hand points at a panel: its trigger and stick are the page's. The rest still goes.
+  s.c.app.pointers.sources.set('right-hand', {handedness: 'right', kind: 'hand', hit: {type: 'panel'}});
+  s.tick();
+  last = sent().at(-1);
+  assert.deepEqual(last.axes, [0.5, -1, 0, 0]);
+  assert.deepEqual(last.buttons.flatMap((value, i) => value ? [i] : []), [3, 6]);
+  // No pad in the browser: nothing is sent, and the backend falls back to what it reads itself.
+  const before = sent().length;
+  s.xr.gamepads = () => [];
+  s.tick();
+  assert.equal(sent().length, before);
+  // Stopping headset input puts the pad at rest at once.
+  s.xr.stop();
+  last = sent().at(-1);
+  assert.ok(sent().length === before + 1 && last.axes.every(value => value === 0) && !last.buttons.some(Boolean));
+});
+
+test('with tracked controllers the gamepad stream is not used', async t => {
+  const taker = {id: 'arm-source', streams: [{name: 'webxr_gamepad', key: 'run/custom/pad', direction: 'in', type: 'sensor_msgs.Joy'}], rpcs: []};
+  const s = setup(t);
+  s.xr.discover([receiver, selector, taker]);
+  s.xr.gamepads = () => [{id: 'pad', mapping: 'standard', connected: true, axes: [1, 1, 1, 1], buttons: Array.from({length: 18}, () => ({pressed: true, value: 1}))}];
+  await s.start();
+  s.tick();
+  assert.equal(s.xr.mode, 'webxr');
+  assert.equal(s.sent.filter(m => m.target.key === 'run/custom/pad').length, 0);
+  assert.equal(s.deadmen.length, 2);
+});
+
+test('controllers in the hands select the controller source', async t => {
+  const s = setup(t);
+  await s.start();
+  assert.deepEqual(s.calls.map(call => call.kwargs.source), ['webxr']);
+  assert.equal(s.xr.mode, 'webxr');
+});
+
+test('a backend that refuses hands leaves headset input off and says why', async t => {
+  const s = setup(t);
+  s.frame.session.inputSources = [tracked('left'), tracked('right')];
+  t.mock.method(gateway, 'callRpc', async () => ({ok: false, error: "teleop source must be 'leader' or 'webxr'"}));
+  await s.start();
+  assert.equal(s.xr.enabled, false);
+  assert.match(s.xr.error, /does not take a headset's hands/);
+});
+
+test('a hand sample needs a hand and a real pose, and a pinch is not a controller', () => {
+  assert.equal(handSample(input('left'), pose), null);
+  assert.equal(handSample(tracked('left'), {...pose, emulatedPosition: true}), null);
+  assert.equal(handSample(tracked('left'), null), null);
+  assert.equal(handSample(tracked('left'), pose).pose.pose.position.y, 1.2);
+  assert.equal(controllerSample(pinch('left'), pose), null);
 });

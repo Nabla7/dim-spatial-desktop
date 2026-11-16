@@ -87,6 +87,7 @@ frontend/src/app.js         App: renderer, stage, dock, pointers, bus, blueprint
   ui/flow.js                which side panels stay and in which column each stands (no drawing; tested)
   ui/textinput.js           the hidden textarea every text box edits through
   input/pointers.js         mouse, controllers, hands -> panel events, picks, world grabs, drive sticks
+  input/gamepads.js         a gamepad the browser has, in tracked hands: its sticks, trigger and shoulder button (tested)
   xr/session.js, hands.js   entering and leaving sessions; hand joints
   scene/stage.js            the table: robot frame -> scene, scale, clip planes, lid
   scene/layers.js           topics -> layers; tf feed; framing; follow; watchdog
