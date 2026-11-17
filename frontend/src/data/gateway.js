@@ -129,4 +129,6 @@ export const gateway = {
   notify: (title, body, kind = 'info') => request('../../gateways/desktop/ui/notifications', {method: 'POST', body: {title, body, kind}}),
   // What is on screen, for an agent that asks Desktop what the user is looking at.
   reportView: (app, view) => request(`../../gateways/desktop/views/${segment(app)}`, {method: 'PUT', body: view}),
+  reportDiagnostics: report => request('api/diagnostics', {method: 'POST', body: report, timeout: 3000}),
+  diagnostics: () => request('api/diagnostics', {timeout: 3000}),
 };

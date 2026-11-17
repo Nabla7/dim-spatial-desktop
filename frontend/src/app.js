@@ -15,6 +15,7 @@ import {Pointers} from './input/pointers.js';
 import {Hands} from './xr/hands.js';
 import {XRManager} from './xr/session.js';
 import {Bus} from './data/bus.js';
+import {Diagnostics} from './data/diagnostics.js';
 import {Blueprint} from './data/blueprint.js';
 import {gateway} from './data/gateway.js';
 import {Controls} from './data/controls.js';
@@ -73,6 +74,7 @@ export class App extends EventTarget {
     this.bus = new Bus();
     this.blueprint = new Blueprint(this.bus);
     this.layers = new Layers(this);
+    this.diagnostics = new Diagnostics(this);
     this.halo = new Halo(this);
     this.controls = new Controls(this);
     this.replay = new Replay(this);
@@ -281,6 +283,7 @@ export class App extends EventTarget {
 
   frame(time, xrFrame) {
     const now = performance.now(), dt = Math.min(0.1, (now - this.last) / 1000);
+    this.diagnostics.frame(now);
     this.last = now;
     if (this.toasts.length && this.toasts[this.toasts.length - 1].until < now) { this.toasts = this.toasts.filter(toast => toast.until >= now); this.dispatchEvent(new Event('toast')); }
     if (xrFrame) { this.xr.place(xrFrame); this.hands.update(xrFrame, this.renderer.xr.getReferenceSpace()); }
