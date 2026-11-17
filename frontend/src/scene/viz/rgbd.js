@@ -130,7 +130,8 @@ export class RgbdLayer extends CameraBase {
       this.colorCamera = {intrinsics: [info.K[0], info.K[4], info.K[2], info.K[5]], size: [info.width, info.height],
         lens: distortion(info.distortion_model, info.D), frameId: info.header?.frame_id || ''};
     }));
-    this.listen(this.bus.subscribe(this.depthTopic.key, {delivery: 'latest', encoding: 'dimos_lcm_depth', maxHz: 15}, message => {
+    // A scene mesh can lose detail/rate before the live camera used for manipulation.
+    this.listen(this.bus.subscribe(this.depthTopic.key, {delivery: 'latest', encoding: 'dimos_lcm_depth', maxHz: 15, bandwidthPriority: 0.25}, message => {
       const depth = message.decoded;
       if (!depth?.data || !depth.width) return;
       this.frameId = message.header?.frameId || depth.frameId || this.frameId;

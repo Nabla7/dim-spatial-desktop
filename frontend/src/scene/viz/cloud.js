@@ -66,7 +66,7 @@ export class CloudLayer extends Layer {
   }
 
   start() {
-    this.listen(this.bus.subscribe(this.topic.key, {delivery: 'latest', encoding: 'dimos_lcm_pointcloud2', maxHz: 12}, message => {
+    this.listen(this.bus.subscribe(this.topic.key, {delivery: 'latest', encoding: 'dimos_lcm_pointcloud2', maxHz: 12, bandwidthPriority: 0.25}, message => {
       const cloud = message.decoded;
       if (!cloud?.positions) return;
       this.frameId = message.header?.frameId ?? cloud.frameId ?? this.frameId;

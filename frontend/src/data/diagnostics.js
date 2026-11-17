@@ -88,6 +88,11 @@ export class Diagnostics extends EventTarget {
     return {clientId: this.id, at: Date.now(), userAgent: navigator.userAgent, immersive: !!app.xr.presenting,
       visibility: document.visibilityState, runId: app.blueprint.runId, connection: app.bus.state,
       display: {fps: elapsed > 0 ? intervals.length * 1000 / elapsed : null, frameMsP95: percentile(intervals, 0.95)},
+      streams: Object.values(client?.stats || {}).map(entry => entry.gateway).filter(Boolean).map(stream => ({
+        key: stream.key, type: stream.type, channel: stream.opts?.channel, encoding: stream.opts?.encoding,
+        maxHz: stream.opts?.maxHz, bandwidthPriority: stream.opts?.bandwidthPriority, allocation: stream.allocation,
+        stats: fields(stream.stats, ['received', 'sent', 'bytesSent', 'queuedBytes', 'blockedMs', 'encodingErrors']),
+      })),
       link: {rttMs: client?.rttMs ?? null, gateway: client?.gatewayStats ?? null,
         pair: fields(pair, ['currentRoundTripTime', 'availableIncomingBitrate', 'availableOutgoingBitrate', 'bytesReceived', 'bytesSent']),
         local: fields(rtc.find(stat => stat.id === pair?.localCandidateId), ['candidateType', 'protocol', 'relayProtocol']),

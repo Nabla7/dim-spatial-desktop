@@ -50,9 +50,11 @@ export function openStats(app) {
   function drawViewers(ui, inner) {
     const number = value => Number.isFinite(value) ? value.toFixed(1) : '—';
     let y = inner.y;
-    for (const client of app.diagnostics.clients) {
+    const clients = [...app.diagnostics.clients].sort((a, b) => Number(a.stale) - Number(b.stale) || Number(b.immersive) - Number(a.immersive) || Number(b.visibility === 'visible') - Number(a.visibility === 'visible'));
+    for (const client of clients) {
       const own = client.clientId === app.diagnostics.id ? ' · THIS VIEW' : '';
-      ui.text(`${client.immersive ? 'HEADSET / XR' : 'FLAT VIEW'} ${client.clientId.slice(0, 6)}${own}`, inner.x + 6, y + 18, {size: SIZE.md, weight: 500, color: ui.tone(client.stale ? 'muted' : 'fg')});
+      const browser = /Chrome/.test(client.userAgent) ? 'CHROME' : /Safari/.test(client.userAgent) ? 'SAFARI' : 'BROWSER';
+      ui.text(`${client.immersive ? 'HEADSET / XR' : browser} ${client.clientId.slice(0, 6)}${own}`, inner.x + 6, y + 18, {size: SIZE.md, weight: 500, color: ui.tone(client.stale ? 'muted' : 'fg')});
       ui.text(`${client.stale ? 'STALE · ' : ''}${client.visibility} · scene ${number(client.display?.fps)} fps · RTT ${number(client.link?.rttMs)} ms`, inner.x + 6, y + 42, {size: SIZE.xs, family: 'mono', max: inner.w - 12});
       y += 58;
       for (const camera of client.cameras || []) {
@@ -61,6 +63,14 @@ export function openStats(app) {
         ui.text(`track→shown p95 ${number(camera.latency?.stages?.trackToShown?.p95)} ms · buffer ${number(camera.jitterBufferMs)} ms`, inner.x + 6, y + 59, {size: SIZE.xs, family: 'mono', max: inner.w - 12});
         ui.text(`encode p95 ${number(camera.latency?.stages?.encoding?.p95)} ms · last frame ${number(camera.lastDisplayedAgoMs)} ms ago`, inner.x + 6, y + 80, {size: SIZE.xs, family: 'mono', color: ui.tone('muted'), max: inner.w - 12});
         y += 94;
+      }
+      const bandwidth = client.link?.gateway?.bandwidth;
+      ui.text(`link budget ${number(bandwidth?.budgetBytesPerSec / 1e6)} MB/s · demand ${number(bandwidth?.demandBytesPerSec / 1e6)} MB/s`, inner.x + 6, y + 16, {size: SIZE.xs, family: 'mono', max: inner.w - 12}); y += 30;
+      const streams = [...client.streams || []].filter(stream => stream.allocation).sort((a, b) => b.allocation.demandBytesPerSec - a.allocation.demandBytesPerSec).slice(0, 4);
+      for (const stream of streams) {
+        ui.text(stream.key, inner.x + 6, y + 16, {size: SIZE.xs, family: 'mono', max: inner.w - 12});
+        ui.text(`grant ${number(stream.allocation.budgetBytesPerSec / 1e6)} / wants ${number(stream.allocation.demandBytesPerSec / 1e6)} MB/s · priority ${stream.bandwidthPriority ?? 1}`, inner.x + 6, y + 36, {size: SIZE.xs, family: 'mono', color: ui.tone('muted'), max: inner.w - 12});
+        y += 48;
       }
       ui.hair(inner.x, y, inner.r, y); y += 12;
     }

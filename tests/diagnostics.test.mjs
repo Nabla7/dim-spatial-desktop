@@ -26,6 +26,7 @@ test('viewer telemetry measures display separately from gateway sends and unavai
   diagnostics.watches = new Map([[feed, {shown: 11, lastShown: performance.now() - 500, handle: 1}]]);
   diagnostics.previous = new Map([['camera', {shown: 5, sent: 30}]]);
   diagnostics.app = {bus: {client: null, state: 'connected'}, xr: {presenting: true}, blueprint: {topics: new Map([['camera', {hz: 30}]]), runId: 'test'}, layers: {feeds: {feeds: new Map([['camera', feed]])}}};
+  diagnostics.app.bus.client = {stats: {depth: {gateway: {key: 'depth', opts: {bandwidthPriority: 0.25}, allocation: {demandBytesPerSec: 20e6, budgetBytesPerSec: 1e6}}}}};
   globalThis.document = {visibilityState: 'visible'};
   const report = await diagnostics.collect();
   assert.equal(report.display.fps, 50); assert.equal(report.immersive, true);
@@ -34,5 +35,8 @@ test('viewer telemetry measures display separately from gateway sends and unavai
   assert.ok(camera.displayedFps > 2.9 && camera.displayedFps < 3.1);
   assert.equal(camera.decodedFps, null); assert.equal(camera.jitterBufferMs, null);
   assert.equal(camera.sourceFps, 30);
+  assert.equal(report.streams[0].key, 'depth');
+  assert.equal(report.streams[0].allocation.demandBytesPerSec, 20e6);
+  assert.equal(report.streams[0].bandwidthPriority, 0.25);
   delete globalThis.document;
 });

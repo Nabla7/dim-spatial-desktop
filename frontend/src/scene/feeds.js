@@ -18,8 +18,9 @@ export class Feeds {
     const encoding = topic.type === 'sensor_msgs.CompressedImage' ? 'dimos_lcm_compressed_image' : 'dimos_lcm_image';
     // Bound each camera's bandwidth demand instead of letting full-resolution
     // sources request tens of Mb/s. Keep their pixels; adapt compression first.
+    // Live video takes precedence over depth meshes and point clouds on a busy link.
     feed.subscription = this.bus.subscribe(topic.key, {
-      delivery: 'latest', encoding, maxBitrate: 5_000_000, minResolutionScale: 1,
+      delivery: 'latest', encoding, maxBitrate: 5_000_000, minResolutionScale: 1, bandwidthPriority: 10,
     }, message => {
       if (message.mediaStream && video.srcObject !== message.mediaStream) { video.srcObject = message.mediaStream; video.play().catch(() => {}); }
       if (message.header?.frameId) feed.frameId = message.header.frameId;
