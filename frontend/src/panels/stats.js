@@ -59,7 +59,7 @@ export function openStats(app) {
       y += 58;
       for (const camera of client.cameras || []) {
         ui.text(camera.key.replace(/^dimos\//, '').replace(/\/sensor_msgs\.[^/]+$/, ''), inner.x + 6, y + 16, {size: SIZE.sm, family: 'mono', max: inner.w - 12});
-        ui.text(`fps: source ${number(camera.sourceFps)} · sent ${number(camera.sentFps)} · received ${number(camera.receivedFps)} · shown ${number(camera.displayedFps)}`, inner.x + 6, y + 38, {size: SIZE.xs, family: 'mono', max: inner.w - 12});
+        ui.text(`fps: input ${number(camera.sourceFps)} · sent ${number(camera.sentFps)} · received ${number(camera.receivedFps)} · shown ${number(camera.displayedFps)}`, inner.x + 6, y + 38, {size: SIZE.xs, family: 'mono', max: inner.w - 12});
         ui.text(`track→shown p95 ${number(camera.latency?.stages?.trackToShown?.p95)} ms · buffer ${number(camera.jitterBufferMs)} ms`, inner.x + 6, y + 59, {size: SIZE.xs, family: 'mono', max: inner.w - 12});
         ui.text(`encode p95 ${number(camera.latency?.stages?.encoding?.p95)} ms · last frame ${number(camera.lastDisplayedAgoMs)} ms ago`, inner.x + 6, y + 80, {size: SIZE.xs, family: 'mono', color: ui.tone('muted'), max: inner.w - 12});
         y += 94;

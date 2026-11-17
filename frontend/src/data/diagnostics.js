@@ -64,16 +64,18 @@ export class Diagnostics extends EventTarget {
       const watch = this.watch(feed), previous = this.previous.get(feed.key), stats = feed.subscription.gatewayStats;
       const track = feed.video.srcObject?.getVideoTracks()[0];
       const received = rtc.find(stat => stat.type === 'inbound-rtp' && stat.kind === 'video' && stat.trackIdentifier === track?.id);
-      const counters = {shown: watch.shown, sent: stats?.stats?.sent, decoded: received?.framesDecoded, received: received?.framesReceived,
+      const counters = {shown: watch.shown, input: stats?.stats?.received, sent: stats?.stats?.sent, decoded: received?.framesDecoded, received: received?.framesReceived,
         jitterDelay: received?.jitterBufferDelay, jitterCount: received?.jitterBufferEmittedCount, decodeTime: received?.totalDecodeTime};
       const sameReceiver = previous?.receiver === received?.id;
       const delta = name => sameReceiver && previous && counters[name] >= previous[name] ? counters[name] - previous[name] : null;
       const jitterCount = delta('jitterCount'), decoded = delta('decoded');
-      this.previous.set(feed.key, {...counters, receiver: received?.id});
+      const sameSubscription = previous?.subscription === stats?.id;
+      this.previous.set(feed.key, {...counters, receiver: received?.id, subscription: stats?.id});
       const latency = feed.subscription.videoLatency?.(10000) ?? null;
       return {key: feed.key, width: feed.video.videoWidth, height: feed.video.videoHeight,
-        sourceFps: app.blueprint.topics.get(feed.key)?.hz ?? null,
-        sentFps: rate(previous?.sent, counters.sent, seconds),
+        // Measure this stream's input directly; the optional topic counter may be absent or stale.
+        sourceFps: sameSubscription ? rate(previous?.input, counters.input, seconds) : null,
+        sentFps: sameSubscription ? rate(previous?.sent, counters.sent, seconds) : null,
         receivedFps: sameReceiver ? rate(previous?.received, counters.received, seconds) : null,
         decodedFps: sameReceiver ? rate(previous?.decoded, counters.decoded, seconds) : null,
         displayedFps: watch.handle === null ? null : rate(previous?.shown, counters.shown, seconds),
