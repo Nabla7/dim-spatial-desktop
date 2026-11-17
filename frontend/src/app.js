@@ -87,6 +87,7 @@ export class App extends EventTarget {
     this.pointers.onTablePoint = point => this.controls.place(point);
     this.pointers.driveSticks = (left, right) => this.controls.sticks(left, right);
     this.pointers.teleopOwnsInputs = () => this.controls.xr.ownsInputs;
+    this.pointers.sceneInputLocked = () => this.controls.xr.sceneInputLocked;
     // A gamepad the browser has: say once what each one is read as; panels that show them draw again.
     this.pointers.onPads = (pads, added, gone) => {
       const where = this.xr.presenting ? '' : ' In the headset view';

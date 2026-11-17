@@ -8,6 +8,7 @@ import {gateway} from '../data/gateway.js';
 import {brief, words} from '../util.js';
 import {FORM_ASK} from '../data/agents.js';
 import {codingAgent} from './agent.js';
+import {openArmCalibration} from './arm-calibration.js';
 
 export function openControl(app) {
   const id = 'control';
@@ -85,10 +86,12 @@ export function openControl(app) {
 
   function drawHeadset(ui, area) {
     const xr = controls.xr, owns = xr.ownsInputs;
+    if (xr.calibration.available) ui.button(area.cutTop(44, 10), 'ARM CALIBRATION', () => openArmCalibration(app, panel),
+      {id: 'xr:calibration', tone: 'primary', size: SIZE.sm, sub: 'Shoulders · neutral · reach · saved profiles'});
     ui.button(area.cutTop(48, 12), xr.busy ? 'CONNECTING…' : xr.enabled ? 'STOP HEADSET ARMS' : 'ENABLE HEADSET ARMS',
       () => owns ? xr.stop() : xr.start(), {id: 'xr:enable', enabled: owns || (controls.armed && app.xr.presenting), tone: owns ? 'warn' : 'primary', on: owns, size: SIZE.sm});
     const note = !controls.armed ? 'Arm the controls first.' : !app.xr.presenting ? 'Enter VR or MIXED to use tracked controllers.' :
-      xr.error || (!xr.enabled ? 'Enable to select headset input for the robot.' : xr.mode === 'hands' ? (xr.targets.pad && app.pointers.padInfo.length ? 'Your hands are selected. The gamepad you hold is the robot\'s; a hand that points at a panel keeps its trigger and stick for the panel.' : 'Your hands are selected. The enable button you hold starts and stops the arms.') : 'Headset input selected. Release each grip before engaging.');
+      xr.error || (!xr.enabled ? 'Enable to select headset input for the robot.' : xr.mode === 'hands' ? (xr.targets.pad && app.pointers.padInfo.length ? 'Disable arm tracking with the enable button before using panels. While tracking, all buttons and sticks belong to the robot.' : 'Your hands are selected. The enable button you hold starts and stops the arms.') : 'Headset input selected. Release each grip before engaging.');
     const used = ui.wrap(note, new Rect(area.x, area.y, area.w, 0), {size: SIZE.sm, color: ui.tone(xr.error ? 'danger' : 'muted'), maxLines: 3});
     area.cutTop(used + 16, 0);
     for (const side of ['left', 'right']) {

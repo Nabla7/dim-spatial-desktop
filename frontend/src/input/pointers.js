@@ -42,6 +42,7 @@ export class Pointers {
 
   // -- hit testing ----------------------------------------------------------------------------------
   cast(pointer) {
+    if (this.sceneInputLocked?.()) return null;
     this.raycaster.ray.copy(pointer.ray);
     const meshes = [];
     for (const panel of this.dock.panels) if (!panel.closing && panel.group.visible && panel.group.parent?.visible !== false) meshes.push(panel.mesh);
@@ -77,6 +78,7 @@ export class Pointers {
   }
 
   press(pointer, {grabOnly = false} = {}) {
+    if (this.sceneInputLocked?.()) return;
     const hit = pointer.hit;
     pointer.down = true;
     if (hit?.type === 'panel') {
@@ -94,7 +96,8 @@ export class Pointers {
   }
 
   release(pointer) {
-    const press = pointer.press, hit = pointer.hit;
+    const locked = this.sceneInputLocked?.();
+    const press = locked && pointer.press?.type === 'world' ? null : pointer.press, hit = locked ? null : pointer.hit;
     pointer.down = false; pointer.press = null;
     if (pointer.panelGrab) { this.endPanelGrab(pointer); return; }
     if (press?.type === 'panel') {
@@ -274,8 +277,18 @@ export class Pointers {
   }
 
   // -- XR -------------------------------------------------------------------------------------------
+  syncSceneLock() {
+    const locked = !!this.sceneInputLocked?.();
+    if (locked && !this.sceneWasLocked) {
+      this.cancelGrabs();
+      for (const pointer of [this.mouse, ...this.sources.values()]) this.hover(pointer, null);
+    }
+    this.sceneWasLocked = locked;
+    return locked;
+  }
+
   cancelGrabs() {
-    for (const pointer of this.sources.values()) if (pointer.down) this.cancel(pointer);
+    for (const pointer of [this.mouse, ...this.sources.values()]) if (pointer.down || pointer.panelGrab) this.cancel(pointer);
     this.worldGrabs.clear(); this.twoHand = null;
   }
 
@@ -361,7 +374,8 @@ export class Pointers {
   // controller's trigger and grip do. The hand's pointer is the one the headset tracks for that hand.
   padButtons(held) {
     const teleop = this.teleopOwnsInputs?.() === true;
-    const changedMode = teleop !== this.padTeleop; this.padTeleop = teleop;
+    const locked = !!this.sceneInputLocked?.(), mode = `${teleop}:${locked}`;
+    const changedMode = mode !== this.padTeleop; this.padTeleop = mode;
     for (const side of SIDES) {
       const pointer = [...this.sources.values()].find(p => p.handedness === side && p.kind === 'hand' && p.active) ?? null;
       for (const [name, grabOnly] of [['select', false], ['squeeze', true]]) {
@@ -379,9 +393,9 @@ export class Pointers {
             else this.cancel(holding);
           }
         }
-        if (action !== 'press') continue;
+        if (action !== 'press' || locked) continue;
         this.hover(pointer, this.cast(pointer));
-        // While the hands move a robot's arms, a press is for a panel only and nothing is taken hold of.
+        // Before arm engagement, panels remain available for setup and calibration.
         if (teleop && (grabOnly || pointer.hit?.type !== 'panel')) continue;
         this.press(pointer, {grabOnly}); button.holding = pointer;
       }
@@ -399,6 +413,7 @@ export class Pointers {
   }
 
   update(dt, frame, tint) {
+    const locked = this.syncSceneLock();
     if (!frame || !this.renderer.xr.isPresenting) {
       if (this.mouse.panelGrab) this.movePanelGrab(this.mouse, dt);
       // A gamepad is used in a headset, where a hand points. It is seen, and said, on a screen too.
@@ -422,7 +437,7 @@ export class Pointers {
     for (const pointer of this.sources.values()) {
       if (pointer.kind === 'gaze' && pointer.down) this.poseSource(pointer, frame);
       const visual = pointer.visual;
-      if (!pointer.active) { visual.group.visible = false; continue; }
+      if (!pointer.active || locked) { visual.group.visible = false; continue; }
       if (pointer.panelGrab) this.movePanelGrab(pointer, dt);
       else if (!this.worldGrabs.has(pointer.id)) this.hover(pointer, this.cast(pointer));
       // Ray and cursor.
@@ -443,6 +458,7 @@ export class Pointers {
       }
     }
     this.padButtons(held);
+    if (locked) return; // No panel scrolling, world movement or UI button consumption during arm teleop.
     this.moveWorld();
     // Thumbsticks: over a panel the stick scrolls it; otherwise the right stick turns and zooms the world
     // and the left stick slides it.

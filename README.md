@@ -133,8 +133,11 @@ the arms. Release either to hold both arms while repositioning your controllers.
 closes that gripper while its grip is held; releasing the trigger opens it. Hold the right stick
 button to drive using the backend's stick mapping. Ordinary panel driving is suspended in this mode.
 
-Grips belong to teleop while this mode is on, so they cannot also grab the world or panels. Release
-grips to click UI with a trigger. A grip first pressed over a panel cannot engage an arm until released.
+While either arm is engaged, both hands belong exclusively to the robot: no panel clicks, scrolling,
+or scene grabs, even when pointing through UI. Release both controller grips, or disable hand tracking
+with the Joy-Con enable button, to use the desktop again. Held Joy-Con triggers must be released before
+they can click UI. Calibration remains interactive. A grip first pressed over a panel before engagement
+cannot engage an arm until released.
 **STOP**, **SAFE**, closing Control, leaving VR, losing the command lease or hiding the XR session
 ends headset control. Lost tracking releases the affected hand and requires a fresh grip release.
 Reconnecting does not automatically enable it. **USE LEADER INPUT**, when offered by the blueprint,
@@ -343,6 +346,24 @@ Desktop builds the app's server with nix (a Deno script; the page itself has no 
 An open page reloads itself when the app is updated.
 
 ### In a headset
+
+For a backend offering arm calibration, open **Control → Headset → Arm Calibration**.
+The panel works on desktop and in VR/MIXED: name your operator profile, mark both shoulders, capture a neutral grip,
+then left and right full forward reach. Keep your head facing forward during capture. Captures wait three seconds and reject unstable
+or stale tracking. Neutral grips should be level and point forward; reach captures
+measure arm length independently of grip orientation. The robot holds still;
+3D markers show mapped neutral/full-reach targets, live targets and measured grippers.
+The panel shows wrist-reach saturation and target-to-robot position error. Neutral sets
+grip orientation; shoulder-to-hand distance sets reach without rotating forward into up.
+Old profiles require a fresh shoulder calibration and remain saved on disk.
+Review the gain for each arm, save, then choose **Use Profile** and engage
+with the usual arm-enable controls. Recalibrate, cancel a draft or delete a profile in
+the same panel. Hands and controller grips have separate compatible profiles, stored
+by the backend. The operator frame follows live headset position and heading,
+so turning your head and hands together leaves the robot hand targets unchanged.
+Head-only turns also change this reference; head/wrist input does not measure chest
+heading. Changing headset tracking space stops input until you use the profile again.
+Head and wrist messages from each XR frame share one acquisition timestamp.
 
 WebXR needs a secure context, and the headset must reach Desktop.
 

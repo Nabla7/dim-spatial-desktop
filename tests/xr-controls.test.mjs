@@ -180,13 +180,16 @@ test('a headset with hands alone selects the hands source and sends wrist poses 
   assert.equal(s.xr.hands.left.tracked, false);
 });
 
-test('a backend that takes the head gets it with the hands, on its own key, and not with controllers', async t => {
+test('both hands and controllers send the head on its own key; shared consumers do not duplicate it', async t => {
   const taker = {id: 'arm-source', streams: [{name: 'webxr_head', key: 'run/custom/head', direction: 'in', type: 'geometry_msgs.PoseStamped'}], rpcs: []};
   assert.equal(xrBinding([receiver, selector, taker]).head.key, 'run/custom/head');
-  // Two takers: the page does not choose between them.
-  assert.equal(xrBinding([receiver, selector, taker, {...taker, id: 'another'}]).head, null);
+  // Shared head topic is one stream; two distinct head topics remain ambiguous.
+  assert.equal(xrBinding([receiver, selector, taker, {...taker, id: 'another'}]).head.key, 'run/custom/head');
+  assert.equal(xrBinding([receiver, selector, taker, {...taker, id: 'another', streams: [{...taker.streams[0], key: 'other/head'}]}]).head, null);
+  let captureClock = 1000;
+  t.mock.method(Date, 'now', () => ++captureClock);
   const head = {transform: {position: {x: 0.05, y: 1.5, z: 0.1}, orientation: {x: 0, y: 0, z: 0, w: 1}}};
-  for (const [inputs, expected] of [[[tracked('left'), tracked('right')], [['head', 1.5]]], [null, []]]) {
+  for (const [inputs, expected] of [[[tracked('left'), tracked('right')], [['head', 1.5]]], [null, [['head', 1.5]]]]) {
     const s = setup(t);
     s.xr.discover([receiver, selector, taker]);
     if (inputs) s.frame.session.inputSources = inputs;
@@ -196,6 +199,10 @@ test('a backend that takes the head gets it with the hands, on its own key, and 
     s.tick();
     const sent = s.sent.filter(m => m.target.key === 'run/custom/head').map(m => [m.value.header.frame_id, m.value.pose.position.y]);
     assert.deepEqual(sent, expected);
+    // Even if the clock advances while serializing, one XR frame has one time.
+    const poses = s.sent.filter(m => m.type === 'geometry_msgs.PoseStamped');
+    assert.equal(poses.length, 3);
+    assert.equal(new Set(poses.map(m => JSON.stringify(m.value.header.stamp))).size, 1);
   }
   // A head the headset only guesses at is not sent.
   assert.equal(headSample({...head, emulatedPosition: true}), null);
@@ -278,4 +285,47 @@ test('a hand sample needs a hand and a real pose, and a pinch is not a controlle
   assert.equal(handSample(tracked('left'), null), null);
   assert.equal(handSample(tracked('left'), pose).pose.pose.position.y, 1.2);
   assert.equal(controllerSample(pinch('left'), pose), null);
+});
+
+test('backend hand engagement gives both JoyCons exclusive robot input until disabled', async t => {
+  const s = setup(t), callbacks = [], closed = [];
+  const hands = {id: 'hand-deadman-provider', rpcs: [], streams: [{name: 'hand_buttons', key: 'remapped/arm-deadmen', direction: 'out', type: 'std_msgs.UInt32'}]};
+  const padInput = {id: 'pad-input', streams: [{name: 'webxr_gamepad', key: 'remapped/pad', direction: 'in', type: 'sensor_msgs.Joy'}], rpcs: []};
+  s.c.bus.subscribeDecoded = (key, options, callback) => { callbacks.push({key, callback}); return {close() { closed.push(key); }}; };
+  s.xr.discover([receiver, selector, hands, padInput]);
+  assert.equal(xrBinding([receiver, selector, hands, {...hands, id: 'unrelated', streams: [{...hands.streams[0], key: 'other/deadmen'}]}]).engagement, null);
+  s.frame.session.inputSources = [tracked('left'), tracked('right')]; s.frame.getJointPose = () => pose;
+  const down = new Set(), pad = {id: 'Joy-Con (L/R)', mapping: 'standard', connected: true, axes: [.25, -.5, .75, -1],
+    get buttons() { return Array.from({length: 18}, (_, i) => ({pressed: down.has(i), value: down.has(i) ? 1 : 0})); }};
+  s.xr.gamepads = () => [pad];
+  await s.start(); s.tick();
+  assert.equal(s.xr.sceneInputLocked, false); // selecting hands is not engaging them
+  assert.equal(callbacks[0].key, 'remapped/arm-deadmen');
+  for (const side of ['left', 'right']) s.c.app.pointers.sources.set(side, {handedness: side, kind: 'hand', hit: {type: 'panel'}});
+  callbacks[0].callback({data: (1 << 1) | (1 << 9)});
+  assert.equal(s.xr.sceneInputLocked, true);
+  down.add(6); down.add(7); s.tick();
+  let message = s.sent.filter(m => m.target.key === 'remapped/pad').at(-1).value;
+  assert.deepEqual(message.axes, pad.axes);
+  assert.equal(message.buttons[6], 1); assert.equal(message.buttons[7], 1);
+  // Calibration cannot accidentally take the scene away from its capture buttons.
+  s.xr.calibrating = true; assert.equal(s.xr.sceneInputLocked, false); s.xr.calibrating = false;
+  callbacks[0].callback({data: 0}); assert.equal(s.xr.sceneInputLocked, false);
+  s.tick(); message = s.sent.filter(m => m.target.key === 'remapped/pad').at(-1).value;
+  assert.deepEqual(message.axes, [0, 0, 0, 0]); assert.equal(message.buttons[7], 0);
+  s.xr.stop(); callbacks[0].callback({data: 514});
+  assert.equal(s.xr.sceneInputLocked, false); assert.equal(s.xr.handEngagement, false);
+  assert.deepEqual(closed, ['remapped/arm-deadmen']);
+});
+
+test('engaging either tracked controller reserves both hands and their sticks from UI', async t => {
+  const s = setup(t); await s.start(); s.tick();
+  grip(s.left, 1); s.tick(); assert.equal(s.xr.sceneInputLocked, true);
+  s.c.app.pointers.sources.set(s.left, {hit: {type: 'panel'}, down: true, press: {type: 'panel'}});
+  s.c.app.pointers.sources.set(s.right, {hit: {type: 'panel'}});
+  s.left.gamepad.axes = [0, 0, .5, -.5]; s.left.gamepad.buttons[0] = {value: 1, pressed: true};
+  grip(s.right, 1); s.tick();
+  assert.deepEqual(s.joy('left').axes, [.5, -.5, 1, 1]); assert.equal(s.joy('right').axes[3], 1);
+  grip(s.left, 0); s.tick(); assert.equal(s.xr.sceneInputLocked, true);
+  grip(s.right, 0); s.tick(); assert.equal(s.xr.sceneInputLocked, false);
 });
