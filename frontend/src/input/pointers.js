@@ -3,8 +3,12 @@
 // (pressed in empty space) take hold of the world on the table: one hand pans, two hands zoom and turn.
 // XR presses come from the session's select/squeeze events, not from polling buttons, because those
 // events are the user activation that focusing a text box or starting the microphone needs.
+// A gamepad the browser has, held in hands a headset tracks, is the one exception (input/gamepads.js): its
+// buttons are polled, so they press and hold like a trigger and a grip but are no such activation.
 import * as THREE from 'three';
+import {describePads, heldPads, padAction} from './gamepads.js';
 
+const SIDES = ['left', 'right'];
 const _matrix = new THREE.Matrix4(), _inverse = new THREE.Matrix4(), _a = new THREE.Vector3(), _b = new THREE.Vector3();
 const _position = new THREE.Vector3(), _quaternion = new THREE.Quaternion(), _scale = new THREE.Vector3();
 
@@ -18,6 +22,11 @@ export class Pointers {
     this.worldGrabs = new Map();     // pointer id -> grabbed robot-frame point (and the hand's position)
     this.twoHand = null;
     this.sticks = {left: [0, 0], right: [0, 0]};
+    // A gamepad in the hands: per hand and button, whether it was down last frame and the pointer it holds down.
+    this.pads = Object.fromEntries(SIDES.map(side => [side, {select: {was: false, holding: null}, squeeze: {was: false, holding: null}}]));
+    this.padInfo = []; this.padKey = '';
+    this.padTeleop = false;
+    this.onPads = null;              // (pads, added, gone) => void: the gamepads the browser has, or what is pressed, changed
     this.onEmptyClick = null;
     this.onWorldClick = null;        // a press on the scene that did not move it: (pointer) => void
     this.bindMouse();
@@ -33,6 +42,7 @@ export class Pointers {
 
   // -- hit testing ----------------------------------------------------------------------------------
   cast(pointer) {
+    if (this.sceneInputLocked?.()) return null;
     this.raycaster.ray.copy(pointer.ray);
     const meshes = [];
     for (const panel of this.dock.panels) if (!panel.closing && panel.group.visible && panel.group.parent?.visible !== false) meshes.push(panel.mesh);
@@ -68,6 +78,7 @@ export class Pointers {
   }
 
   press(pointer, {grabOnly = false} = {}) {
+    if (this.sceneInputLocked?.()) return;
     const hit = pointer.hit;
     pointer.down = true;
     if (hit?.type === 'panel') {
@@ -85,7 +96,8 @@ export class Pointers {
   }
 
   release(pointer) {
-    const press = pointer.press, hit = pointer.hit;
+    const locked = this.sceneInputLocked?.();
+    const press = locked && pointer.press?.type === 'world' ? null : pointer.press, hit = locked ? null : pointer.hit;
     pointer.down = false; pointer.press = null;
     if (pointer.panelGrab) { this.endPanelGrab(pointer); return; }
     if (press?.type === 'panel') {
@@ -265,22 +277,53 @@ export class Pointers {
   }
 
   // -- XR -------------------------------------------------------------------------------------------
+  syncSceneLock() {
+    const locked = !!this.sceneInputLocked?.();
+    if (locked && !this.sceneWasLocked) {
+      this.cancelGrabs();
+      for (const pointer of [this.mouse, ...this.sources.values()]) this.hover(pointer, null);
+    }
+    this.sceneWasLocked = locked;
+    return locked;
+  }
+
+  cancelGrabs() {
+    for (const pointer of [this.mouse, ...this.sources.values()]) if (pointer.down || pointer.panelGrab) this.cancel(pointer);
+    this.worldGrabs.clear(); this.twoHand = null;
+  }
+
+  cancel(pointer) {
+    this.hover(pointer, null);
+    if (pointer.press?.type === 'world') pointer.press = null;
+    if (pointer.down) this.release(pointer);
+    this.endWorldGrab(pointer);
+  }
+
   bindSession(session, reference) {
     this.reference = reference;
     const source = event => this.sourcePointer(event.inputSource, event.frame);
-    session.addEventListener('selectstart', event => { const pointer = source(event); this.hover(pointer, this.cast(pointer)); this.press(pointer); });
-    session.addEventListener('selectend', event => { const pointer = source(event); if (pointer.kind !== 'gaze') this.hover(pointer, this.cast(pointer)); this.release(pointer); });
+    session.addEventListener('selectstart', event => {
+      const pointer = source(event); this.hover(pointer, this.cast(pointer));
+      // A trigger while gripping belongs to the robot gripper, never to a panel behind its ray.
+      if (this.teleopOwnsInputs?.() && (event.inputSource.gamepad?.buttons[1]?.value > 0.5 || pointer.hit?.type !== 'panel')) return;
+      this.press(pointer);
+    });
+    session.addEventListener('selectend', event => { const pointer = source(event); if (pointer.kind !== 'gaze') this.hover(pointer, this.cast(pointer)); if (pointer.down) this.release(pointer); });
     // The grip button takes hold of whatever the ray is on: a panel anywhere on its face, else the world.
-    session.addEventListener('squeezestart', event => { const pointer = source(event); this.hover(pointer, this.cast(pointer)); pointer.squeezing = true; this.press(pointer, {grabOnly: true}); });
-    session.addEventListener('squeezeend', event => { const pointer = source(event); pointer.squeezing = false; this.release(pointer); });
+    session.addEventListener('squeezestart', event => { if (this.teleopOwnsInputs?.()) return; const pointer = source(event); this.hover(pointer, this.cast(pointer)); pointer.squeezing = true; this.press(pointer, {grabOnly: true}); });
+    session.addEventListener('squeezeend', event => { const pointer = source(event); if (!pointer.squeezing) return; pointer.squeezing = false; this.release(pointer); });
     session.addEventListener('inputsourceschange', event => { for (const removed of event.removed) this.dropSource(removed); });
-    session.addEventListener('end', () => { for (const input of [...this.sources.keys()]) this.dropSource(input); this.worldGrabs.clear(); this.twoHand = null; });
+    session.addEventListener('end', () => {
+      for (const input of [...this.sources.keys()]) this.dropSource(input);
+      this.worldGrabs.clear(); this.twoHand = null;
+      for (const side of SIDES) { this.sticks[side] = [0, 0]; for (const button of Object.values(this.pads[side])) { button.was = false; button.holding = null; } }
+    });
   }
 
   sourcePointer(input, frame) {
     let pointer = this.sources.get(input);
     if (!pointer) {
-      const kind = input.targetRayMode === 'tracked-pointer' ? (input.hand ? 'hand' : 'controller') : 'gaze';
+      const kind = input.hand ? 'hand' : input.targetRayMode === 'tracked-pointer' ? 'controller' : 'gaze';
       pointer = this.pointer(`xr-${input.handedness}-${kind}-${this.sources.size}`, kind);
       pointer.handedness = input.handedness; pointer.input = input;
       pointer.visual = this.makeRay(); this.scene.add(pointer.visual.group);
@@ -293,14 +336,17 @@ export class Pointers {
   dropSource(input) {
     const pointer = this.sources.get(input);
     if (!pointer) return;
-    if (pointer.down) this.release(pointer);
+    if (pointer.down) this.cancel(pointer);
     this.hover(pointer, null); this.endWorldGrab(pointer);
     pointer.visual?.group.removeFromParent();
     this.sources.delete(input);
   }
 
   poseSource(pointer, frame) {
-    const input = pointer.input, rayPose = frame.getPose(input.targetRaySpace, this.reference);
+    const input = pointer.input;
+    let rayPose = input.targetRaySpace ? frame.getPose(input.targetRaySpace, this.reference) : null;
+    // A hand the headset gives no ray for points as its wrist lies: out along the hand.
+    if (!rayPose && input.hand && frame.getJointPose) { const wrist = input.hand.get('wrist'); rayPose = wrist ? frame.getJointPose(wrist, this.reference) : null; }
     pointer.active = !!rayPose;
     if (!rayPose) return;
     pointer.pose.fromArray(rayPose.transform.matrix);
@@ -308,6 +354,52 @@ export class Pointers {
     pointer.ray.direction.set(0, 0, -1).transformDirection(pointer.pose);
     const gripPose = input.gripSpace ? frame.getPose(input.gripSpace, this.reference) : null;
     if (gripPose) pointer.grip.copy(gripPose.transform.position); else pointer.grip.copy(pointer.ray.origin);
+  }
+
+  // The gamepads the browser has. A frame that may not ask (a permissions policy) has none.
+  gamepads() {
+    try { return [...(navigator.getGamepads?.() ?? [])].filter(Boolean); } catch { return []; }
+  }
+
+  notePads(pads) {
+    const info = describePads(pads), key = JSON.stringify(info);
+    if (key === this.padKey) return;
+    const before = new Set(this.padInfo.map(pad => pad.id)), after = new Set(info.map(pad => pad.id));
+    const added = info.filter(pad => !before.has(pad.id)), gone = this.padInfo.filter(pad => !after.has(pad.id));
+    this.padKey = key; this.padInfo = info;
+    this.onPads?.(info, added, gone);
+  }
+
+  // A gamepad's trigger presses what its hand points at and its shoulder button takes hold of it, as a
+  // controller's trigger and grip do. The hand's pointer is the one the headset tracks for that hand.
+  padButtons(held) {
+    const teleop = this.teleopOwnsInputs?.() === true;
+    const locked = !!this.sceneInputLocked?.(), mode = `${teleop}:${locked}`;
+    const changedMode = mode !== this.padTeleop; this.padTeleop = mode;
+    for (const side of SIDES) {
+      const pointer = [...this.sources.values()].find(p => p.handedness === side && p.kind === 'hand' && p.active) ?? null;
+      for (const [name, grabOnly] of [['select', false], ['squeeze', true]]) {
+        const button = this.pads[side][name], pressed = !!held[side]?.[name];
+        if (changedMode) {
+          if (button.holding) this.cancel(button.holding);
+          button.holding = null; button.was = pressed;
+        }
+        const action = padAction({was: button.was, pressed, holding: button.holding, pointer});
+        button.was = pressed;
+        if (action === 'release') {
+          const holding = button.holding; button.holding = null;
+          if (holding.down && this.sources.get(holding.input) === holding) {
+            if (holding === pointer && held[side]) this.release(holding);
+            else this.cancel(holding);
+          }
+        }
+        if (action !== 'press' || locked) continue;
+        this.hover(pointer, this.cast(pointer));
+        // Before arm engagement, panels remain available for setup and calibration.
+        if (teleop && (grabOnly || pointer.hit?.type !== 'panel')) continue;
+        this.press(pointer, {grabOnly}); button.holding = pointer;
+      }
+    }
   }
 
   makeRay() {
@@ -321,21 +413,31 @@ export class Pointers {
   }
 
   update(dt, frame, tint) {
-    if (!frame || !this.renderer.xr.isPresenting) { if (this.mouse.panelGrab) this.movePanelGrab(this.mouse, dt); return; }
-    const session = frame.session;
+    const locked = this.syncSceneLock();
+    if (!frame || !this.renderer.xr.isPresenting) {
+      if (this.mouse.panelGrab) this.movePanelGrab(this.mouse, dt);
+      // A gamepad is used in a headset, where a hand points. It is seen, and said, on a screen too.
+      this.notePads(this.gamepads());
+      return;
+    }
+    const session = frame.session, dead = value => Math.abs(value || 0) < 0.18 ? 0 : value, controllers = new Set();
     for (const input of session.inputSources) {
       // A gaze-and-pinch source exists only while pinched; it is posed by its events.
-      if (input.targetRayMode !== 'tracked-pointer') continue;
-      const pointer = this.sourcePointer(input, frame);
-      if (input.gamepad && !input.hand && (input.handedness === 'left' || input.handedness === 'right')) {
-        const axes = input.gamepad.axes, dead = value => Math.abs(value || 0) < 0.18 ? 0 : value;
-        this.sticks[input.handedness] = [dead(axes[2]), dead(axes[3])];
+      if (input.targetRayMode !== 'tracked-pointer' && !input.hand) continue;
+      this.sourcePointer(input, frame);
+      if (input.gamepad && !input.hand && SIDES.includes(input.handedness)) {
+        const axes = input.gamepad.axes;
+        this.sticks[input.handedness] = [dead(axes[2]), dead(axes[3])]; controllers.add(input.handedness);
       }
     }
+    // A gamepad the browser has is in the hands: a hand with no controller has that pad's stick, else none.
+    const pads = this.gamepads(), held = heldPads(pads);
+    for (const side of SIDES) if (!controllers.has(side)) this.sticks[side] = held[side] ? held[side].stick.map(dead) : [0, 0];
+    this.notePads(pads);
     for (const pointer of this.sources.values()) {
       if (pointer.kind === 'gaze' && pointer.down) this.poseSource(pointer, frame);
       const visual = pointer.visual;
-      if (!pointer.active) { visual.group.visible = false; continue; }
+      if (!pointer.active || locked) { visual.group.visible = false; continue; }
       if (pointer.panelGrab) this.movePanelGrab(pointer, dt);
       else if (!this.worldGrabs.has(pointer.id)) this.hover(pointer, this.cast(pointer));
       // Ray and cursor.
@@ -355,6 +457,8 @@ export class Pointers {
         visual.dot.material.color.copy(tint);
       }
     }
+    this.padButtons(held);
+    if (locked) return; // No panel scrolling, world movement or UI button consumption during arm teleop.
     this.moveWorld();
     // Thumbsticks: over a panel the stick scrolls it; otherwise the right stick turns and zooms the world
     // and the left stick slides it.

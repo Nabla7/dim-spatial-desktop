@@ -2,11 +2,13 @@
 // start-up output. A launch goes through Desktop's Launcher, so it gets the config the user saved there.
 // What a blueprint cannot start without, and what a recording session is told each time (what the
 // episodes are of, where they go), is asked for here and sent with the launch (data/launch.js).
+// A sim2 blueprint can also be given a scene of the Scenes library: its robot is put in that scene
+// first (the app's server asks dimos to), and the launch is given the file that holds both.
 import {SIZE} from '../ui/holo.js';
 import {Rect} from '../ui/rect.js';
 import {gateway} from '../data/gateway.js';
 import {duration} from '../util.js';
-import {launchAsks, launchConfig, missing, stamp} from '../data/launch.js';
+import {launchAsks, launchConfig, missing, sceneModule, stamp} from '../data/launch.js';
 
 const PHASE = {starting: ['STARTING', 'warn'], running: ['RUNNING', 'ok'], stopping: ['STOPPING', 'warn'], failed: ['FAILED', 'danger'], stopped: ['IDLE', 'muted']};
 
@@ -21,24 +23,28 @@ function failure(launch) {
 const LABEL = {task: 'What the episodes are of', folder: 'Where the episodes go (a new folder)'};
 
 // choose: open with this blueprint picked (RECORD lists the ones that record).
-export function openLauncher(app, {choose: wanted = null} = {}) {
+// scene: open with this scene picked, on the blueprints that simulate (SCENES: run a robot here).
+export function openLauncher(app, {choose: wanted = null, scene: wantedScene = null} = {}) {
   const id = 'launcher';
-  if (app.dock.has(id) && !wanted) { app.dock.close(id); return; }
-  const state = {filter: wanted || '', chosen: null, working: false, error: null, armedStop: 0, asks: null, values: {}};
+  if (app.dock.has(id)) { app.dock.close(id); if (!wanted && !wantedScene) return; }
+  // host: the module that serves the chosen blueprint's scene, when its robot can stand in another one.
+  const state = {filter: wanted || (wantedScene ? 'sim2' : ''), chosen: null, working: false, error: null, armedStop: 0, asks: null, values: {}, host: null, scene: wantedScene};
   const blueprint = app.blueprint;
   blueprint.loadCatalog();
 
   // Pick a blueprint: read what its launch has to be told, and fill in what is known.
   async function choose(name) {
-    state.chosen = name; state.asks = null; state.values = {}; state.waiting = false; panel.invalidate();
+    state.chosen = name; state.asks = null; state.values = {}; state.waiting = false; state.host = null; panel.invalidate();
     if (!name) return;
-    let asks = [], recordings = null;
+    let asks = [], recordings = null, host = null;
     try {
       const [config, entry, folder] = await Promise.all([gateway.blueprintConfig(name), gateway.blueprint(name), gateway.recordings().catch(() => null)]);
-      asks = launchAsks(config, entry.modules || []); recordings = folder?.path || null;
+      asks = launchAsks(config, entry.modules || []); recordings = folder?.path || null; host = sceneModule(config);
     } catch { /* a blueprint whose config cannot be read is launched as before, with nothing added */ }
     if (state.chosen !== name) return;
     const before = told()[name] || {};
+    state.host = host;
+    if (host) { if (app.scenes.list === null) app.scenes.refresh(); if (!wantedScene) state.scene = before.scene ?? null; }
     for (const ask of asks) {
       // A recording goes into a new folder each time: the last one's parent, with this blueprint and the time.
       if (ask.role === 'folder') { const parent = before[ask.key] || recordings; if (parent && ask.required) state.values[ask.key] = `${parent.replace(/\/+$/, '')}/${name}-${stamp()}`; }
@@ -54,8 +60,16 @@ export function openLauncher(app, {choose: wanted = null} = {}) {
     // Kept for the next session: the task as given, and the folder the recordings were put under.
     const all = told(), kept = {};
     for (const ask of asks) { const value = String(values[ask.key] ?? '').trim(); if (value) kept[ask.key] = ask.role === 'folder' ? value.replace(/\/[^/]*$/, '') : value; }
+    const scene = state.host && app.scenes.list?.some(entry => entry.id === state.scene) ? {id: state.scene, host: state.host} : null;
+    if (state.host) kept.scene = scene?.id ?? null;
     if (Object.keys(kept).length) { all[name] = {...all[name], ...kept}; try { localStorage.setItem(TOLD, JSON.stringify(all)); } catch { /* private mode */ } }
-    run(() => gateway.launch(name, launchConfig(asks, values)), `Launching ${name}`);
+    run(async () => {
+      const config = launchConfig(asks, values);
+      if (!scene) return gateway.launch(name, config);
+      // The robot is put in the scene first; the module that serves the scene is given that file.
+      const {usd} = await gateway.scenes.compose(scene.id, name);
+      return gateway.launch(name, {...config, modules: {...config?.modules, [scene.host]: {...config?.modules?.[scene.host], model: usd}}});
+    }, `Launching ${name}`);
   }
 
   async function run(action, done) {
@@ -115,7 +129,7 @@ export function openLauncher(app, {choose: wanted = null} = {}) {
     const chosen = shown.find(entry => entry.name === state.chosen) || null;
     if (chosen) {
       const asks = state.asks || [], lacking = missing(asks, state.values);
-      const card = content.cutBottom(150 + asks.length * 62 + (state.asks ? 0 : 24), 10);
+      const card = content.cutBottom(150 + asks.length * 62 + (state.host ? 62 : 0) + (state.asks ? 0 : 24), 10);
       ui.chamfer(card, 10); ui.ctx.fillStyle = ui.tone('primary', 0.06); ui.ctx.fill(); ui.ctx.strokeStyle = ui.tone('primary', 0.4); ui.ctx.lineWidth = 1.2; ui.ctx.stroke();
       const inner = card.inset(14, 12);
       ui.text(chosen.title || chosen.name, inner.x, inner.y + 12, {size: SIZE.md, weight: 600, max: inner.w});
@@ -128,6 +142,19 @@ export function openLauncher(app, {choose: wanted = null} = {}) {
         ui.text(LABEL[ask.role] ? ask.key : ask.required ? 'needed' : '', inner.r, y + 9, {size: SIZE.xs - 2, family: 'mono', color: ui.tone('muted', 0.8), align: 'right', max: 150});
         ui.field(new Rect(inner.x, y + 20, inner.w, 36), state.values[ask.key] ?? '', {id: `ask:${ask.key}`, family: ask.role === 'task' ? 'sans' : 'mono',
           placeholder: ask.required ? 'needed to launch' : ask.was == null ? 'the blueprint\'s own' : `the blueprint's own: ${ask.was}`, onInput: value => { state.values[ask.key] = value; }});
+        y += 62;
+      }
+      if (state.host) {
+        // Its own scene first, then every scene of the library, in a ring.
+        const list = app.scenes.list || [], at = list.findIndex(entry => entry.id === state.scene);
+        const step = by => { const next = (at + 1 + by + list.length + 1) % (list.length + 1); state.scene = next ? list[next - 1].id : null; panel.invalidate(); };
+        ui.text('The scene the robot stands in', inner.x, y + 9, {size: SIZE.xs, color: ui.tone('muted'), max: inner.w - 150});
+        ui.text(at < 0 ? `${list.length} in SCENES` : `${at + 1} / ${list.length}`, inner.r, y + 9, {size: SIZE.xs - 2, family: 'mono', color: ui.tone('muted', 0.8), align: 'right', max: 150});
+        const row = new Rect(inner.x, y + 20, inner.w, 36), back = row.cutLeft(44, 6), next = row.cutRight(44, 6);
+        ui.button(back, '‹', () => step(-1), {id: 'scene:back', size: SIZE.md, tone: 'muted', enabled: list.length > 0 && !state.working});
+        ui.button(next, '›', () => step(1), {id: 'scene:next', size: SIZE.md, tone: 'muted', enabled: list.length > 0 && !state.working});
+        ui.chamfer(row, 6); ui.ctx.fillStyle = ui.tone(at < 0 ? 'muted' : 'primary', 0.08); ui.ctx.fill(); ui.ctx.strokeStyle = ui.tone(at < 0 ? 'muted' : 'primary', 0.4); ui.ctx.lineWidth = 1; ui.ctx.stroke();
+        ui.text(at < 0 ? 'ITS OWN' : list[at].name, row.x + row.w / 2, row.y + row.h / 2 + 1, {size: SIZE.sm, weight: 500, align: 'center', color: ui.tone(at < 0 ? 'muted' : 'fg'), max: row.w - 16});
         y += 62;
       }
       // The first read of a blueprint's config takes the gateway some seconds: a press meanwhile is held until it is known.
@@ -160,6 +187,7 @@ export function openLauncher(app, {choose: wanted = null} = {}) {
   });
   for (const type of ['change', 'catalog']) blueprint.addEventListener(type, () => panel.invalidate(), {signal: panel.signal});
   app.episodes.addEventListener('change', () => panel.invalidate(), {signal: panel.signal});
+  app.scenes.addEventListener('change', () => { if (state.host) panel.invalidate(); }, {signal: panel.signal});
   // A launch uses up its folder: when the blueprint is idle again the next one is proposed.
   const isIdle = () => blueprint.phase === 'stopped' || blueprint.phase === 'failed';
   let wasIdle = isIdle();

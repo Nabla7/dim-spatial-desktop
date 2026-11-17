@@ -11,6 +11,7 @@ import {Rect} from '../ui/rect.js';
 import {gateway} from '../data/gateway.js';
 import {BODIES, bodyText, shortShape} from '../data/scenes.js';
 import {openAgent} from './agent.js';
+import {openLauncher} from './launcher.js';
 
 const DECK_HEIGHT = 0.108;
 const STATE = {pass: 'ok', fail: 'danger', not_run: 'muted'};
@@ -69,11 +70,13 @@ export function openScenes(app, restore = null) {
     ui.heading(new Rect(head.x, head.y, head.w - 56, head.h), 'Scenes on this machine', `${scenes.list.length}`);
     ui.button(new Rect(head.r - 44, head.y - 6, 44, 34), '', () => scenes.refresh(true), {id: 'rescan', icon: 'refresh', tone: 'muted', enabled: !scenes.busy});
     const adder = area.cutBottom(state.note ? 118 : 86, 8);
-    ui.text('A scene.json, a USD file, or a folder that holds one:', adder.x, adder.y + 12, {size: SIZE.xs, color: ui.tone('muted'), max: adder.w});
+    ui.text('A scene.json, a USD file, a MuJoCo scene, or a folder that holds one:', adder.x, adder.y + 12, {size: SIZE.xs, color: ui.tone('muted'), max: adder.w});
     const row = new Rect(adder.x, adder.y + 28, adder.w, 44), button = row.cutRight(96, 8);
     ui.field(row, state.path, {id: 'path', placeholder: '/full/path/to/a/scene', family: 'mono', onInput: value => { state.path = value; }, onSubmit: add});
     ui.button(button, state.adding ? '…' : 'ADD', add, {id: 'path:add', size: SIZE.sm, enabled: !!state.path.trim() && !state.adding});
     if (state.note) ui.wrap(state.note, new Rect(adder.x, adder.y + 80, adder.w, 0), {size: SIZE.xs, color: ui.tone('warn'), maxLines: 2});
+    // The open scene, with the robot of a blueprint that simulates standing at its first place.
+    if (scenes.id) ui.button(area.cutBottom(44, 8), 'RUN A ROBOT HERE', () => openLauncher(app, {scene: scenes.id}), {id: 'run-here', icon: 'rocket', size: SIZE.sm});
     if (!scenes.list.length) { ui.empty(area, 'No scene was found under Desktop\'s app data.', 'Add one by its path.'); return; }
     ui.scroll(area, 'scenes', inner => {
       let y = inner.y;

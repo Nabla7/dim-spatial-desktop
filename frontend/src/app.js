@@ -15,6 +15,7 @@ import {Pointers} from './input/pointers.js';
 import {Hands} from './xr/hands.js';
 import {XRManager} from './xr/session.js';
 import {Bus} from './data/bus.js';
+import {Diagnostics} from './data/diagnostics.js';
 import {Blueprint} from './data/blueprint.js';
 import {gateway} from './data/gateway.js';
 import {Controls} from './data/controls.js';
@@ -73,6 +74,7 @@ export class App extends EventTarget {
     this.bus = new Bus();
     this.blueprint = new Blueprint(this.bus);
     this.layers = new Layers(this);
+    this.diagnostics = new Diagnostics(this);
     this.halo = new Halo(this);
     this.controls = new Controls(this);
     this.replay = new Replay(this);
@@ -84,6 +86,19 @@ export class App extends EventTarget {
     this.replay.addEventListener('open', () => this.scenes.close());
     this.pointers.onTablePoint = point => this.controls.place(point);
     this.pointers.driveSticks = (left, right) => this.controls.sticks(left, right);
+    this.pointers.teleopOwnsInputs = () => this.controls.xr.ownsInputs;
+    this.pointers.sceneInputLocked = () => this.controls.xr.sceneInputLocked;
+    // A gamepad the browser has: say once what each one is read as; panels that show them draw again.
+    this.pointers.onPads = (pads, added, gone) => {
+      const where = this.xr.presenting ? '' : ' In the headset view';
+      for (const pad of added) {
+        this.toast(pad.hands ? `Gamepad ${pad.id} found (${pad.hands}).${where || ' Now'}: trigger or primary face button selects, shoulder grabs, sticks move.`
+          : `Gamepad ${pad.id}: this layout is not known (${pad.axes} axes, ${pad.buttons} buttons).`, pad.hands ? 'info' : 'warn', 8);
+      }
+      // A pad the browser stops giving (in a headset view, some do) is said too: its buttons then do nothing.
+      for (const pad of gone) this.toast(`Gamepad ${pad.id} is gone: the browser gives it to this page no more.`, 'warn', 8);
+      this.controls.emit();
+    };
     this.toasts = []; this.selected = null; this.last = performance.now();
 
     openShell(this);
@@ -238,10 +253,12 @@ export class App extends EventTarget {
     this.dock.setMode('room');
     this.backdrop.setPassthrough(this.xr.passthrough);
     this.pointers.bindSession(session, this.renderer.xr.getReferenceSpace());
-    this.renderer.xr.getReferenceSpace().addEventListener?.('reset', () => this.xr.recenter());
+    this.renderer.xr.getReferenceSpace().addEventListener?.('reset', () => { this.controls.xr.stop(); this.xr.recenter(); });
+    session.addEventListener('visibilitychange', () => { if (session.visibilityState !== 'visible') this.controls.disarm(); });
   }
 
   onSessionEnd() {
+    this.controls.disarm();
     if (this.sceneView.walk.on) this.sceneView.leave();
     this.orbit.enabled = true;
     this.dock.setMode('hud');
@@ -267,12 +284,14 @@ export class App extends EventTarget {
 
   frame(time, xrFrame) {
     const now = performance.now(), dt = Math.min(0.1, (now - this.last) / 1000);
+    this.diagnostics.frame(now);
     this.last = now;
     if (this.toasts.length && this.toasts[this.toasts.length - 1].until < now) { this.toasts = this.toasts.filter(toast => toast.until >= now); this.dispatchEvent(new Event('toast')); }
     if (xrFrame) { this.xr.place(xrFrame); this.hands.update(xrFrame, this.renderer.xr.getReferenceSpace()); }
     else if (!this.sceneView.walk.on) this.orbit.update();   // a viewer inside a scene holds the camera
     this.stage.update(time / 1000, dt);
     this.pointers.update(dt, xrFrame, this.theme.three.primary);
+    this.controls.xr.frame(xrFrame, this.renderer.xr.getReferenceSpace(), now);
     this.controls.tick(now);
     this.replay.tick(now, dt);
     // A scene or a replayed episode has the table: the live layers wait until it is closed.

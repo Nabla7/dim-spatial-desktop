@@ -8,7 +8,10 @@ import {gateway} from './gateway.js';
 export function parseKey(key) {
   const parts = String(key || '').split('/'), last = parts[parts.length - 1];
   const typed = /^[a-z0-9_]+\.[A-Za-z0-9_]+$/.test(last) && parts.length > 2;
-  return {key, topic: '/' + parts.slice(1, typed ? -1 : undefined).join('/'), type: typed ? last : null};
+  // Hosted runs add their domain before the topic. Keep it in the transport key,
+  // but don't let a long run ID hide every camera's name in the panels.
+  const topicStart = parts[0] === 'dimos-domains' ? 2 : 1;
+  return {key, topic: '/' + parts.slice(topicStart, typed ? -1 : undefined).join('/'), type: typed ? last : null};
 }
 
 // "dimos.msgs.sensor_msgs.Image.Image" (a Python class path) -> "sensor_msgs.Image".

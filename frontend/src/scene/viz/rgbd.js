@@ -1,8 +1,13 @@
 // Cameras. A depth image with a colour image and intrinsics becomes a textured surface standing where
 // the camera sees it: the depth is unprojected on the GPU (a grid whose vertices read the depth texture),
 // so a new frame costs one texture upload. A colour image alone is a frustum with the picture on its far end.
+// The colour of a surface is a camera's own picture. A colour camera with intrinsics of its own is another
+// camera than the depth image's (another size, lens or place): each point of the surface is then looked up
+// where that camera sees it. Without them its picture is taken to cover the depth image exactly.
 import * as THREE from 'three';
 import {Layer} from '../layer.js';
+import {distortion, projectGlsl} from './camera-model.js';
+import {DEPTH_GRID_COLUMNS, meshDepthQuality} from './depth-budget.js';
 
 const surfaceVertex = /* glsl */`
 #include <clipping_planes_pars_vertex>
@@ -11,6 +16,7 @@ uniform vec4 intrinsics;      // fx, fy, cx, cy in source pixels
 uniform vec2 sourceSize, cell; // cell: one grid step in uv
 uniform float depthScale, nearLimit, farLimit, edge;
 varying vec2 vUv;
+varying vec3 vOptical;
 varying float vValid, vDepth;
 float depthAt(vec2 at) { return texture2D(depthMap, at).r * depthScale; }
 void main() {
@@ -24,6 +30,7 @@ void main() {
   vValid = ok ? 1.0 : 0.0; vDepth = z;
   vec2 pixel = uv * sourceSize;
   vec3 optical = vec3((pixel.x - intrinsics.z) * z / intrinsics.x, (pixel.y - intrinsics.w) * z / intrinsics.y, z);
+  vOptical = optical;
   vec4 mvPosition = modelViewMatrix * vec4(optical, 1.0);
   gl_Position = projectionMatrix * mvPosition;
   #include <clipping_planes_vertex>
@@ -31,15 +38,26 @@ void main() {
 
 const surfaceFragment = /* glsl */`
 #include <clipping_planes_pars_fragment>
+${projectGlsl}
 uniform sampler2D colorMap;
-uniform float hasColor, opacity, time;
+uniform float hasColor, projectColor, opacity, time;
+uniform mat4 colorFromDepth;  // a point in the depth image's optical frame, in the colour camera's
+uniform vec2 colorSize;       // the picture size the colour intrinsics are for
 uniform vec3 tint;
 varying vec2 vUv;
+varying vec3 vOptical;
 varying float vValid, vDepth;
 void main() {
   #include <clipping_planes_fragment>
   if (vValid < 0.995) discard;
-  vec3 color = hasColor > 0.5 ? texture2D(colorMap, vec2(vUv.x, 1.0 - vUv.y)).rgb : tint * (0.25 + 0.75 * fract(vDepth * 4.0));
+  vec2 at = vUv; float seen = hasColor;
+  if (projectColor > 0.5) {
+    vec3 p = (colorFromDepth * vec4(vOptical, 1.0)).xyz;
+    if (p.z > 0.0) at = colorPixel(p) / colorSize;
+    // What that camera does not see has no colour of its own.
+    if (p.z <= 0.0 || at.x < 0.0 || at.x > 1.0 || at.y < 0.0 || at.y > 1.0) seen = 0.0;
+  }
+  vec3 color = seen > 0.5 ? texture2D(colorMap, vec2(at.x, 1.0 - at.y)).rgb : tint * (0.25 + 0.75 * fract(vDepth * 4.0));
   // A faint moving contour in depth: it reads as a scan passing over the surface.
   float sweep = exp(-pow((fract(vDepth * 0.5 - time * 0.25) - 0.5) * 14.0, 2.0));
   gl_FragColor = vec4(color + tint * sweep * 0.12, opacity);
@@ -90,13 +108,17 @@ class CameraBase extends Layer {
 }
 
 export class RgbdLayer extends CameraBase {
-  constructor(layers, {depth, color, info}) {
+  // colorInfo: the colour camera's own intrinsics, when it has them apart from the depth image's.
+  constructor(layers, {depth, color, info, colorInfo}) {
     super(layers, {kind: 'rgbd', label: color ? `${color.topic} + depth` : depth.topic, topic: depth, glyph: 'camera'}, {color, info});
     this.depthTopic = depth; this.depthTexture = null; this.grid = null; this.dims = [0, 0];
+    this.colorInfoTopic = colorInfo || null; this.colorCamera = null;
     this.uniforms = {
       depthMap: {value: null}, colorMap: {value: null}, intrinsics: {value: new THREE.Vector4(1, 1, 0, 0)}, sourceSize: {value: new THREE.Vector2(1, 1)},
       cell: {value: new THREE.Vector2()}, depthScale: {value: 1}, nearLimit: {value: 0.05}, farLimit: {value: 12}, edge: {value: 0.045},
       hasColor: {value: 0}, opacity: {value: 1}, time: {value: 0}, tint: {value: this.theme.three.primary.clone()},
+      projectColor: {value: 0}, colorFromDepth: {value: new THREE.Matrix4()}, colorIntrinsics: {value: new THREE.Vector4(1, 1, 0, 0)},
+      colorSize: {value: new THREE.Vector2(1, 1)}, colorDistortion: {value: new Float32Array(8)},
     };
     this.material = this.stage.clip(new THREE.ShaderMaterial({uniforms: this.uniforms, vertexShader: surfaceVertex, fragmentShader: surfaceFragment, clipping: true, side: THREE.DoubleSide}));
     this.theme.addEventListener('change', () => this.uniforms.tint.value.copy(this.theme.three.primary));
@@ -104,7 +126,16 @@ export class RgbdLayer extends CameraBase {
 
   start() {
     this.startCamera();
-    this.listen(this.bus.subscribe(this.depthTopic.key, {delivery: 'latest', encoding: 'dimos_lcm_depth', maxHz: 15}, message => {
+    if (this.colorInfoTopic) this.listen(this.bus.subscribeDecoded(this.colorInfoTopic.key, {delivery: 'latest', maxHz: 1}, info => {
+      if (!info.K || !(info.K[0] > 0) || !info.width) return;
+      this.colorCamera = {intrinsics: [info.K[0], info.K[4], info.K[2], info.K[5]], size: [info.width, info.height],
+        lens: distortion(info.distortion_model, info.D), frameId: info.header?.frame_id || ''};
+    }));
+    // A scene mesh can lose detail/rate before the live camera used for manipulation.
+    // Start cheaply until the first frame tells us its source dimensions, then request the detail
+    // the mesh can actually draw. This is a viewer subscription; sensor/recording pixels stay intact.
+    this.depthQuality = 0;
+    this.depthSubscription = this.listen(this.bus.subscribe(this.depthTopic.key, {delivery: 'latest', encoding: 'dimos_lcm_depth', maxHz: 15, bandwidthPriority: 0.25, encodeOptions: {quality: 0}}, message => {
       const depth = message.decoded;
       if (!depth?.data || !depth.width) return;
       this.frameId = message.header?.frameId || depth.frameId || this.frameId;
@@ -112,15 +143,24 @@ export class RgbdLayer extends CameraBase {
     }));
   }
 
+  stop() { super.stop(); this.depthSubscription = null; }
+
   setDepth(depth) {
     const {width, height, data} = depth;
+    const quality = meshDepthQuality(depth.sourceWidth || width), subscription = this.depthSubscription;
+    if (subscription?.update && quality !== this.depthQuality) {
+      this.depthQuality = quality;
+      subscription.update({encodeOptions: {quality}}).catch(() => {
+        if (this.depthSubscription === subscription) this.depthQuality = null;
+      });
+    }
     if (this.dims[0] !== width || this.dims[1] !== height) {
       this.depthTexture?.dispose();
       this.depthTexture = new THREE.DataTexture(new Float32Array(width * height), width, height, THREE.RedFormat, THREE.FloatType);
       this.depthTexture.minFilter = this.depthTexture.magFilter = THREE.NearestFilter;
       this.uniforms.depthMap.value = this.depthTexture; this.dims = [width, height];
       // The grid is at most 256 columns: finer than that is past what a headset resolves on a table.
-      const columns = Math.min(width, 256), rows = Math.max(2, Math.round(columns * height / width));
+      const columns = Math.min(width, DEPTH_GRID_COLUMNS), rows = Math.max(2, Math.round(columns * height / width));
       this.grid?.geometry.dispose(); this.grid?.removeFromParent();
       const geometry = new THREE.PlaneGeometry(1, 1, columns - 1, rows - 1), uv = geometry.attributes.uv;
       // PlaneGeometry's v runs bottom to top; image rows run top to bottom.
@@ -145,8 +185,17 @@ export class RgbdLayer extends CameraBase {
     const sx = this.size[0] ? width / this.size[0] : 1, sy = this.size[1] ? height / this.size[1] : 1;
     u.intrinsics.value.set(this.K[0] * sx, this.K[4] * sy, this.K[2] * sx, this.K[5] * sy);
     u.sourceSize.value.set(width, height); u.time.value = now / 1000;
-    const ready = this.feed && this.feed.video.readyState >= 2;
-    u.colorMap.value = ready ? this.feed.texture : null; u.hasColor.value = ready ? 1 : 0;
+    let seen = this.feed && this.feed.video.readyState >= 2, project = false;
+    if (seen && this.colorInfoTopic) {
+      // That camera's picture goes on the surface once its intrinsics, its lens and its place are known.
+      const camera = this.colorCamera, from = camera?.lens && this.tf.lookup(camera.frameId || this.frameId), to = this.tf.lookup(this.frameId);
+      if (from && to) {
+        u.colorFromDepth.value.copy(from).invert().multiply(to);
+        u.colorIntrinsics.value.set(...camera.intrinsics); u.colorSize.value.set(...camera.size); u.colorDistortion.value.set(camera.lens);
+        project = true;
+      } else seen = false;
+    }
+    u.colorMap.value = seen ? this.feed.texture : null; u.hasColor.value = seen ? 1 : 0; u.projectColor.value = project ? 1 : 0;
     setFrustum(this.frustum, [this.K[0] * sx, 0, this.K[2] * sx, 0, this.K[4] * sy, this.K[5] * sy], width, height, 0.12);
   }
 }

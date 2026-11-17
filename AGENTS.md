@@ -60,7 +60,8 @@ server/replay.ts            datasets on disk, the reader process per Python runt
 server/replay/worker.py     reads an episode: frames, checks, images, the model's shapes, where each body was
 server/replay/recover.py    runs an episode's physics again in sim2 and compares it with the recording
 server/worker.ts            what the readers share: a long-lived Python process, a followed one, bytes in an answer
-server/scenes.ts            scenes on disk, the Python that can read them, views, checks, rays, pins, revisions; routes api/scenes/*
+server/scenes.ts            scenes on disk, the Python that can read them, views, checks, rays, pins, revisions; MuJoCo scenes
+                            taken in and a blueprint's robot put in a scene, both by Desktop's dimos; routes api/scenes/*
 server/scenes/check.py      the check of a scene (docs/SCENES.md); Scene (the USD and its manifest), World (the compiled model)
 server/scenes/derive.py     USD -> scene.glb (visible shapes, materials), collision.glb, textures, view.json
 server/scenes/worker.py     describes a stage, answers rays with the compiled model, compares two revisions
@@ -74,6 +75,7 @@ frontend/src/app.js         App: renderer, stage, dock, pointers, bus, blueprint
   data/bus.js               zenoh-gateway client + msgs.js; key and type helpers; files.File decoder
   data/blueprint.js         the live model: modules, RPCs, streams, topics, rates, process stats
   data/controls.js          what can be commanded, found from the blueprint; arming, the lease, the deadman
+  data/xr-controls.js       WebXR input protocol discovery, controller poses/buttons, explicit source handover and grip release gates
   data/episodes.js          episodes for training: the episode control and its recorders, found by the Spec; status, commands
   data/launch.js            what a launch has to be told: required fields with no value, a session's task and folder
   data/agents.js, cbor.js   chat backends (a session agent per coding agent, the blueprint's own agent)
@@ -85,6 +87,7 @@ frontend/src/app.js         App: renderer, stage, dock, pointers, bus, blueprint
   ui/flow.js                which side panels stay and in which column each stands (no drawing; tested)
   ui/textinput.js           the hidden textarea every text box edits through
   input/pointers.js         mouse, controllers, hands -> panel events, picks, world grabs, drive sticks
+  input/gamepads.js         a gamepad the browser has, in tracked hands: its sticks, trigger and shoulder button (tested)
   xr/session.js, hands.js   entering and leaving sessions; hand joints
   scene/stage.js            the table: robot frame -> scene, scale, clip planes, lid
   scene/layers.js           topics -> layers; tf feed; framing; follow; watchdog
@@ -147,6 +150,12 @@ tests/*.test.mjs            node --test: the panel flow, episodes, launch asks, 
 
 ## Adding things
 
+- **A robot in a scene** (`server/scenes.ts`, `data/launch.js`, `panels/launcher.js`): a scene holds no
+  robot. A MuJoCo scene named in ADD is converted by Desktop's dimos (`dimos.sim2.scenes.mjcf`) into
+  `scenes/imported/<name>` with a manifest. A blueprint that simulates (it has a `SimModule` and a
+  `UsdManager` with a `model`) gets a scene row in its launch card; on LAUNCH the server asks dimos
+  (`dimos.sim2.scenes.compose`) for the scene with that blueprint's robot at its first place, kept under
+  `scenes/cache/composed`, and the launch names it as that module's `model`. No robot is named in this app.
 - **A drawing for a message type**: a `Layer` subclass in `scene/viz/` (`start()` subscribes with
   `this.listen(...)`, `update()` places by `this.place(object, frameId)`, materials go through
   `this.stage.clip(...)`), then one line in `Layers.sync()` choosing it by type.

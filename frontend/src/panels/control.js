@@ -8,6 +8,7 @@ import {gateway} from '../data/gateway.js';
 import {brief, words} from '../util.js';
 import {FORM_ASK} from '../data/agents.js';
 import {codingAgent} from './agent.js';
+import {openArmCalibration} from './arm-calibration.js';
 
 export function openControl(app) {
   const id = 'control';
@@ -51,7 +52,7 @@ export function openControl(app) {
   }
 
   function drawDrive(ui, area) {
-    const target = controls.drive, armed = controls.armed;
+    const target = controls.drive, armed = controls.armed && !controls.xr.ownsInputs;
     if (controls.drives.length > 1) {
       const index = controls.drives.indexOf(target), row = area.cutTop(48, 8);
       ui.text('Sends to', row.x, row.cy, {size: SIZE.sm, color: ui.tone('muted')});
@@ -79,8 +80,37 @@ export function openControl(app) {
     ui.text(speeds.provider ? 'Shared turn' : 'Top turn', area.x, area.y + 18, {size: SIZE.sm, color: ui.tone('muted')});
     ui.slider(new Rect(area.x + 130, area.y, area.w - 130, 36), controls.speed.angular, angular?.min ?? 0.1, angular?.max ?? 2.5, value => controls.setDriveSpeed('angular', value), {id: 'speed:angular', enabled: !speeds.provider || (armed && speeds.ready), step: 0.05, format: value => `${value.toFixed(2)} rad/s`});
     area.cutTop(44, 0);
-    ui.wrap(armed ? 'Hold the pad, or keys W S (forward, back), A D (turn), Q E (slide). Space stops. In a headset: left stick moves, right stick turns.' : 'Arm the controls to drive.', area, {size: SIZE.xs, color: ui.tone('muted', 0.85), maxLines: 3, lineHeight: 1.45});
+    ui.wrap(armed ? 'Hold the pad, or keys W S (forward, back), A D (turn), Q E (slide). Space stops. In a headset: left stick moves, right stick turns.' : controls.xr.ownsInputs ? 'Headset mode owns the sticks. Stop headset arms to use this pad.' : 'Arm the controls to drive.', area, {size: SIZE.xs, color: ui.tone('muted', 0.85), maxLines: 3, lineHeight: 1.45});
     if (moving) panel.invalidate();
+  }
+
+  function drawHeadset(ui, area) {
+    const xr = controls.xr, owns = xr.ownsInputs;
+    if (xr.calibration.available) ui.button(area.cutTop(44, 10), 'ARM CALIBRATION', () => openArmCalibration(app, panel),
+      {id: 'xr:calibration', tone: 'primary', size: SIZE.sm, sub: 'Shoulders · neutral · reach · saved profiles'});
+    ui.button(area.cutTop(48, 12), xr.busy ? 'CONNECTING…' : xr.enabled ? 'STOP HEADSET ARMS' : 'ENABLE HEADSET ARMS',
+      () => owns ? xr.stop() : xr.start(), {id: 'xr:enable', enabled: owns || (controls.armed && app.xr.presenting), tone: owns ? 'warn' : 'primary', on: owns, size: SIZE.sm});
+    const note = !controls.armed ? 'Arm the controls first.' : !app.xr.presenting ? 'Enter VR or MIXED to use tracked controllers.' :
+      xr.error || (!xr.enabled ? 'Enable to select headset input for the robot.' : xr.mode === 'hands' ? (xr.targets.pad && app.pointers.padInfo.length ? 'Disable arm tracking with the enable button before using panels. While tracking, all buttons and sticks belong to the robot.' : 'Your hands are selected. The enable button you hold starts and stops the arms.') : 'Headset input selected. Release each grip before engaging.');
+    const used = ui.wrap(note, new Rect(area.x, area.y, area.w, 0), {size: SIZE.sm, color: ui.tone(xr.error ? 'danger' : 'muted'), maxLines: 3});
+    area.cutTop(used + 16, 0);
+    for (const side of ['left', 'right']) {
+      const hand = xr.hands[side], hands = xr.enabled && xr.mode === 'hands';
+      const status = !xr.enabled ? 'OFF' : !hand.tracked ? 'NO TRACKING' : hands ? 'HAND TRACKED' : !hand.released ? 'RELEASE GRIP / TRIGGER' : hand.engaged ? 'GRIP HELD' : 'HOLD BOTH GRIPS TO MOVE';
+      ui.text(`${side.toUpperCase()} · ${status}`, area.x, area.cutTop(30, 6).cy, {size: SIZE.sm, color: ui.tone(hand.engaged || (hands && hand.tracked) ? 'ok' : 'muted'), max: area.w});
+    }
+    // A gamepad the browser has, and the buttons it says are down: what the page reads of it can be seen.
+    for (const pad of app.pointers.padInfo) {
+      const pressed = pad.pressed.length ? ` · BUTTON ${pad.pressed.join(', ')}` : '';
+      ui.text(`GAMEPAD · ${pad.id}${pressed}`, area.x, area.cutTop(30, 6).cy, {size: SIZE.sm, color: ui.tone(pad.hands ? 'ok' : 'warn'), max: area.w});
+    }
+    const usesHands = xr.enabled ? xr.mode === 'hands' : [...(app.xr.session?.inputSources ?? [])].some(input => input.hand);
+    const help = usesHands ? 'Point with your hands. Gamepad triggers (ZL / ZR) or the primary face button select panels without pinching. Shoulder buttons grab panels in desktop mode.\n\nAfter enabling teleop, release all buttons, then use the robot’s enable control. Panel clicks stay with the desktop until released. STOP or making controls SAFE returns to desktop interaction.' :
+      'Hold BOTH middle-finger grips, then move the controllers to move the arms. Release either grip to hold both arms and reposition your hands. While gripping, the index trigger closes the gripper; release opens it.\n\nHold the right stick down to drive with the sticks. Release grips to click panels. STOP or making controls SAFE ends headset arm control.';
+    const height = ui.wrap(help, new Rect(area.x, area.y + 8, area.w, 0), {size: SIZE.sm, maxLines: 12, lineHeight: 1.45});
+    area.cutTop(height + 24, 0);
+    const choices = xr.binding?.selector?.rpcs.find(rpc => rpc.name === 'select_teleop_source')?.params.find(param => param.name === 'source')?.choices || [];
+    for (const source of choices.filter(source => source !== 'webxr' && source !== 'hands')) ui.button(area.cutTop(40, 8), `USE ${String(source).toUpperCase()} INPUT`, () => xr.selectSource(source), {id: `xr:source:${source}`, enabled: controls.armed && !xr.busy, tone: 'muted', size: SIZE.sm});
   }
 
   function drawSet(ui, inner) {
@@ -206,23 +236,26 @@ export function openControl(app) {
       if (!armed) state.targets = {};
       if (!app.blueprint.running) { ui.empty(content, 'No blueprint is running.', 'Its controls appear here when one is.'); return; }
       const top = content.cutTop(52, 12);
-      ui.button(top.cutRight(150, 10), 'STOP', () => controls.stop(), {id: 'stop', icon: 'stop', tone: 'danger', on: true, enabled: controls.drives.length > 0});
+      ui.button(top.cutRight(150, 10), 'STOP', () => controls.stop(), {id: 'stop', icon: 'stop', tone: 'danger', on: true, enabled: controls.drives.length > 0 || controls.xr.ownsInputs});
       ui.button(top, armed ? 'ARMED · press to make safe' : 'ARM THE CONTROLS', () => controls.arm(!armed), {id: 'arm', tone: armed ? 'warn' : 'primary', on: armed, icon: armed ? 'warn' : null, enabled: controls.any});
       if (!controls.any) { ui.empty(content, 'This blueprint reads no command streams and has no simple RPCs.'); return; }
       if (controls.statuses.length) drawStatus(ui, content);
       const tabs = [
+        ['headset', 'HEADSET', controls.xr.available ? 1 : 0],
         ['drive', 'DRIVE', controls.drives.length], ['set', 'SET', controls.numbers.length + controls.switches.length + controls.goals.length],
         ['joints', 'JOINTS', controls.joints.length], ['actions', 'ACTIONS', controls.actions.length],
       ].filter(([, , count]) => count > 0);
       if (!tabs.some(([key]) => key === state.tab)) state.tab = tabs[0][0];
       ui.chips(content.cutTop(36, 12), tabs.map(([key, label, count]) => [key, `${label} ${count}`]), state.tab, tab => { state.tab = tab; }, {id: 'tab', size: SIZE.xs});
       if (state.tab !== 'joints') controls.watchJoints(false);
-      if (state.tab === 'drive') drawDrive(ui, content);
+      if (state.tab === 'headset') drawHeadset(ui, content);
+      else if (state.tab === 'drive') drawDrive(ui, content);
       else if (state.tab === 'joints') drawJoints(ui, content);
       else ui.scroll(content, state.tab, inner => state.tab === 'set' ? drawSet(ui, inner) : drawActions(ui, inner));
     },
   });
   for (const type of ['change', 'drive', 'joints', 'status']) controls.addEventListener(type, () => panel.invalidate(), {signal: panel.signal});
+  app.xr.addEventListener('change', () => panel.invalidate(), {signal: panel.signal});
   controls.watchStatus(true);
   // A panel that is gone cannot show what it is commanding: closing it makes the controls safe.
   panel.onDispose = () => { controls.disarm(); controls.watchStatus(false); };

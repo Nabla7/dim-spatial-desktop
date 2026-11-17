@@ -90,6 +90,7 @@ RPCs that the blueprint's own start-up calls (`deliver_*`) fold away under the o
 | the blueprint has | Control shows |
 |---|---|
 | a `Twist` stream a module reads | **DRIVE**: a pad, keys `W S` (forward, back) `A D` (turn) `Q E` (slide), `Space` stops; in a headset the left stick moves and the right stick turns |
+| paired `webxr_pose: PoseStamped` and `webxr_joy: Joy` inputs | **HEADSET**: tracked controller poses and buttons through the blueprint's existing teleop backend |
 | `Float32`, `Int32`, `Bool` streams | **SET**: a slider or a switch (below) |
 | a `PoseStamped` or `PointStamped` navigation goal | **SET**: POINT AT IT, then press a place on the table |
 | a `JointState` command stream, or an RPC `(name: str, position: float)` | **JOINTS**: a slider per joint over its limits, with the measured position marked |
@@ -108,6 +109,45 @@ sends zero on every drive stream. Closing the panel makes the controls safe.
 One app at a time may command a robot (the gateway's lease). The first command takes it, also from
 another app such as Controller; if another app takes it back, the panel says so and your next press
 takes it again.
+
+### Tracked arm control in VR
+
+On a hand-tracking headset such as Vision Pro, paired Bluetooth gamepads also work as desktop
+controls without arming a robot: point with a tracked hand and use its trigger (ZL/ZR on Joy-Cons)
+to select, or the primary face button. Shoulder buttons grab panels; sticks scroll the pointed-at
+panel or move the view. Separate left/right Joy-Cons remain assigned to their own hands, including
+when Safari reports four axis slots for each. Hand tracking supplies the pointing direction.
+
+**ENABLE HEADSET ARMS** selects the backend's hand-tracking mode on these headsets. Release buttons
+after enabling, then use the backend's enable control. Two separate standard-layout halves are
+combined into the same gamepad input as a paired controller. A button used on a panel cannot also
+command the robot until released. **STOP** or **SAFE** restores desktop interaction.
+
+After an update, exit the immersive session, reload the page and enter it again; updates do not
+reload an active immersive session.
+
+Enter **VR** or **MIXED**, then **CONTROL → ARM THE CONTROLS → HEADSET → ENABLE HEADSET ARMS**.
+The page selects `webxr` through the blueprint's source-selection RPC when provided. Release the
+grips and triggers first. For the bimanual backend, hold **both** middle-finger grips to move
+the arms. Release either to hold both arms while repositioning your controllers. In the arm teleop backend, the index trigger
+closes that gripper while its grip is held; releasing the trigger opens it. Hold the right stick
+button to drive using the backend's stick mapping. Ordinary panel driving is suspended in this mode.
+
+While either arm is engaged, both hands belong exclusively to the robot: no panel clicks, scrolling,
+or scene grabs, even when pointing through UI. Release both controller grips, or disable hand tracking
+with the Joy-Con enable button, to use the desktop again. Held Joy-Con triggers must be released before
+they can click UI. Calibration remains interactive. A grip first pressed over a panel before engagement
+cannot engage an arm until released.
+**STOP**, **SAFE**, closing Control, leaving VR, losing the command lease or hiding the XR session
+ends headset control. Lost tracking releases the affected hand and requires a fresh grip release.
+Reconnecting does not automatically enable it. **USE LEADER INPUT**, when offered by the blueprint,
+explicitly returns to the leaders; stopping headset input alone never switches devices.
+
+The page sends raw grip-space poses and the existing WebXR button layout over its leased DimOS
+connection. Each hand has its own latest-message publisher and a neutral-button deadman. Conversion
+to robot coordinates, arm reference capture, IK, motion limits and recording stay in the backend.
+Moving, turning or scaling the hologram does not change the tracking data. This path has browser
+unit tests; physical headset-to-robot motion still needs operator testing.
 
 ## Recording episodes
 
@@ -215,6 +255,17 @@ says what it was made from ([docs/SCENES.md](docs/SCENES.md) proposes what a sce
 checked). Scenes whose manifest is under Desktop's app data are found by themselves. Any other is added by
 the path of its manifest, of a USD file, or of a folder that holds one.
 
+A **MuJoCo scene** (an MJCF file, or a folder with `scene.xml`) is added the same way and is converted on
+the way in: Desktop's dimos writes it as a USD with no robot in it, and the app keeps that with a manifest
+whose first place is free floor near where the source says a robot starts. A scene takes a few seconds.
+Naming the same file again converts it again.
+
+**RUN A ROBOT HERE** opens the Blueprint panel on the blueprints that simulate, with the open scene chosen.
+The launch card of such a blueprint has a row for **the scene the robot stands in**: its own, or any scene
+of the library. On LAUNCH the app asks dimos to take the blueprint's robot out of its own scene and stand
+it at the scene's first place, and gives the launch that file. Nothing is stated for a robot: the
+blueprint names its scene and the joints it drives.
+
 What is on the table is derived from the USD and from nothing else, so it is what a simulator gets: the
 visible shapes with their materials, without the robots a scene file may hold.
 
@@ -286,25 +337,51 @@ A robot that drives stays in the middle of the table until you take hold of the 
 
 ## Install
 
+In DimOS Desktop's **App Store → Install From URL**, enter
+`https://github.com/Nabla7/dim-spatial-desktop` and select the latest release. Or install this release from a terminal:
+
 ```sh
-dimos-desktop install /absolute/path/to/this/repo --name dim-spatial-desktop --ref main
+dimos-desktop install https://github.com/Nabla7/dim-spatial-desktop --name dim-spatial-desktop --ref v0.1.0
 ```
 
 Then open **Spatial Desktop** in Desktop, or `http://127.0.0.1:5555/apps/dim-spatial-desktop/` in its own tab.
 Desktop builds the app's server with nix (a Deno script; the page itself has no build step).
-An open page reloads itself when the app is updated.
+An idle desktop page reloads itself when the app is updated. Exit VR and make the controls safe before reloading a headset.
+Start a DimOS blueprint to see its robot, cameras and controls. Arm calibration, teleoperation and episode recording
+require the corresponding modules in that blueprint; installing this app does not install or start a robot stack.
 
 ### In a headset
 
+For a backend offering arm calibration, open **Control → Headset → Arm Calibration**.
+The panel works on desktop and in VR/MIXED: name your operator profile, mark both shoulders, capture a neutral grip,
+then left and right full forward reach. Keep your head facing forward during capture. Captures wait three seconds and reject unstable
+or stale tracking. Neutral grips should be level and point forward; reach captures
+measure arm length independently of grip orientation. The robot holds still;
+3D markers show mapped neutral/full-reach targets, live targets and measured grippers.
+The panel shows wrist-reach saturation and target-to-robot position error. Neutral sets
+grip orientation; shoulder-to-hand distance sets reach without rotating forward into up.
+Old profiles require a fresh shoulder calibration and remain saved on disk.
+Review the gain for each arm, save, then choose **Use Profile** and engage
+with the usual arm-enable controls. Recalibrate, cancel a draft or delete a profile in
+the same panel. Hands and controller grips have separate compatible profiles, stored
+by the backend. The operator frame follows live headset position and heading,
+so turning your head and hands together leaves the robot hand targets unchanged.
+Head-only turns also change this reference; head/wrist input does not measure chest
+heading. Changing headset tracking space stops input until you use the profile again.
+Head and wrist messages from each XR frame share one acquisition timestamp.
+
 WebXR needs a secure context, and the headset must reach Desktop.
 
-- **Quest over USB**: `adb reverse tcp:5555 tcp:5555`, then open `http://localhost:5555/apps/dim-spatial-desktop/`
-  in the headset's browser.
-- **Any headset on the network**: give Desktop a certificate (`config.yaml`: `desktop: {tls: {cert, key, port: 5443}}`),
+- **Quest or Vision Pro over Wi-Fi**: give Desktop a certificate the headset trusts (`config.yaml`: `desktop: {tls: {cert, key, port: 5443}}`),
   turn network access on (`dimos-desktop password`), and open `https://<this machine>:5443/apps/dim-spatial-desktop/`.
+  The headset and Desktop must be able to reach each other over the network; no cable is needed.
+- **Optional Quest USB development**: `adb reverse tcp:5555 tcp:5555`, then open `http://localhost:5555/apps/dim-spatial-desktop/`
+  in the headset's browser.
 
 The VR and MIXED buttons appear in the command bar when the browser reports a headset.
-This was developed against an emulated headset (see below). It has not been run on a physical device yet.
+The app has been exercised with physical Quest and Vision Pro headsets, including Vision Pro hand tracking with Bluetooth Joy-Cons.
+The emulator below is also available for development. Tracking and camera latency depend on the headset, network and robot backend;
+the Load panel provides measurements for each viewer.
 
 ## Develop
 

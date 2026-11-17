@@ -9,6 +9,7 @@ import {RgbdLayer, CameraLayer} from './viz/rgbd.js';
 import {RobotLayer} from './viz/robot.js';
 import {FramesLayer} from './viz/frames.js';
 import {PoseLayer, PathLayer, GridLayer} from './viz/nav.js';
+import {deliveryRate} from './stream-health.js';
 
 const POSE_TYPES = ['nav_msgs.Odometry', 'geometry_msgs.PoseStamped', 'geometry_msgs.PoseWithCovarianceStamped'];
 const IMAGE_TYPES = ['sensor_msgs.Image', 'sensor_msgs.CompressedImage'];
@@ -73,8 +74,11 @@ export class Layers extends EventTarget {
       const info = named(topic, [name.replace(/_depth.*/i, '_info'), name.replace(/depth_image.*/i, 'camera_info'), `${parent}camera_info`, name.replace(/depth/i, 'color').replace(/[^/]*$/, 'camera_info')], isInfo)
         || inModule(topic, isInfo);
       if (!info) continue;
+      // The colour camera's own intrinsics, by its name (/head_left_color + /head_left_color_info), when
+      // they are not the depth image's: its picture is then put on the surface through that camera.
+      const own = color && named(color, [color.topic.replace(/(_image)?$/, '_info'), color.topic.replace(/[^/]*$/, 'camera_info')], isInfo);
       paired.add(topic.key); if (color) paired.add(color.key);
-      add(`rgbd:${topic.key}`, () => new RgbdLayer(this, {depth: topic, color, info}), true);
+      add(`rgbd:${topic.key}`, () => new RgbdLayer(this, {depth: topic, color, info, colorInfo: own && own !== info ? own : null}), true);
     }
     for (const topic of topics) {
       if (topic.type === 'sensor_msgs.PointCloud2') add(topic.key, () => new CloudLayer(this, topic), !/raw/i.test(topic.topic));
@@ -149,10 +153,11 @@ export class Layers extends EventTarget {
     if (now - (this.checkedAt || 0) > 2000) {
       this.checkedAt = now;
       for (const layer of this.layers.values()) {
-        const rate = layer.topic ? this.app.blueprint.topics.get(layer.topic.key)?.hz || 0 : 0;
-        if (!layer.visible || layer.kind === 'robot' || rate < 0.5) continue;
+        const sourceRate = layer.topic ? this.app.blueprint.topics.get(layer.topic.key)?.hz || 0 : 0;
+        const rate = deliveryRate(layer.topic?.key, sourceRate, layer.subscriptions);
+        if (!layer.visible || layer.kind === 'robot' || sourceRate < 0.5 || rate <= 0) continue;
         const silence = now - Math.max(layer.lastAt, layer.restartedAt || 0, layer.shownAt || 0);
-        if (silence > 8000 + 4000 / rate) { console.warn(`layer ${layer.label}: no data for ${Math.round(silence / 1000)} s while the topic runs at ${rate.toFixed(1)} Hz; subscribing again`); layer.restart(); }
+        if (silence > 8000 + 4000 / rate) { console.warn(`layer ${layer.label}: no data for ${Math.round(silence / 1000)} s with ${rate.toFixed(1)} Hz allocated; subscribing again`); layer.restart(); }
       }
     }
     // A robot that drives is kept at the middle of the table until the user takes hold of the world.
