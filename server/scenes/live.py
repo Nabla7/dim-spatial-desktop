@@ -19,6 +19,16 @@ def asset_key(name: str) -> str:
     return hashlib.sha256(name.encode()).hexdigest() + Path(name).suffix
 
 
+def body_of(prim: Usd.Prim) -> Usd.Prim:
+    while prim and not prim.HasAPI(UsdPhysics.RigidBodyAPI):
+        prim = prim.GetParent()
+    return prim
+
+
+def is_collision(prim: Usd.Prim) -> bool:
+    return prim.HasAPI(UsdPhysics.CollisionAPI) and prim.GetAttribute("physics:collisionEnabled").Get() is not False
+
+
 def prepare(folder: Path) -> tuple[Usd.Stage | None, dict]:
     source = Sdf.Layer.FindOrOpen(str(folder / "source.usda"))
     if source is None:
@@ -53,15 +63,20 @@ def derive_live(folder: Path) -> dict:
     transforms = UsdGeom.XformCache()
     glb = Glb(folder, 1024)
     frames = []
+    # Match sim2's optical geometry: a body's visual shapes take precedence over its collision hulls.
+    visual_bodies = {body.GetPath() for prim in stage.Traverse()
+                     if prim.IsA(UsdGeom.Gprim) and not is_collision(prim) and (body := body_of(prim))}
     for prim in stage.Traverse():
         if not prim.IsA(UsdGeom.Gprim):
             continue
         view = UsdGeom.Imageable(prim)
         group = prim.GetAttribute("mjc:group").Get()
         opacity = UsdGeom.Gprim(prim).GetDisplayOpacityAttr().Get()
+        body = body_of(prim)
         if (view.ComputeVisibility() == UsdGeom.Tokens.invisible
                 or view.ComputePurpose() in (UsdGeom.Tokens.guide, UsdGeom.Tokens.proxy)
                 or (opacity and max(opacity) == 0)
+                or (body and body.GetPath() in visual_bodies and is_collision(prim))
                 or (group is not None and group >= 3)):
             continue
         material, textured = glb.material(prim)
@@ -70,9 +85,6 @@ def derive_live(folder: Path) -> dict:
         shape = geometry(prim, transforms, textured)
         if shape is None:
             continue
-        body = prim
-        while body and not body.HasAPI(UsdPhysics.RigidBodyAPI):
-            body = body.GetParent()
         frame = (body.GetDisplayName() or body.GetName()) if body else ""
         if body:
             inverse = np.linalg.inv(np.array(transforms.GetLocalToWorldTransform(body)))

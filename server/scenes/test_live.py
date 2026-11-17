@@ -25,6 +25,8 @@ def test_mesh_is_local_to_its_named_tf_body(tmp_path):
     transparent = UsdGeom.Cube.Define(stage, "/body/collider")
     transparent.CreateDisplayColorAttr([Gf.Vec3f(1, 1, 1)])
     transparent.CreateDisplayOpacityAttr([0])
+    hull = UsdGeom.Cube.Define(stage, "/body/hull")
+    UsdPhysics.CollisionAPI.Apply(hull.GetPrim())
     stage.GetRootLayer().Save()
 
     result = derive_live(tmp_path)
