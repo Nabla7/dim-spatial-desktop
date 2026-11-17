@@ -337,13 +337,18 @@ A robot that drives stays in the middle of the table until you take hold of the 
 
 ## Install
 
+In DimOS Desktop's **App Store → Install From URL**, enter
+`https://github.com/Nabla7/dim-spatial-desktop` and select the latest release. Or install this release from a terminal:
+
 ```sh
-dimos-desktop install /absolute/path/to/this/repo --name dim-spatial-desktop --ref main
+dimos-desktop install https://github.com/Nabla7/dim-spatial-desktop --name dim-spatial-desktop --ref v0.1.0
 ```
 
 Then open **Spatial Desktop** in Desktop, or `http://127.0.0.1:5555/apps/dim-spatial-desktop/` in its own tab.
 Desktop builds the app's server with nix (a Deno script; the page itself has no build step).
-An open page reloads itself when the app is updated.
+An idle desktop page reloads itself when the app is updated. Exit VR and make the controls safe before reloading a headset.
+Start a DimOS blueprint to see its robot, cameras and controls. Arm calibration, teleoperation and episode recording
+require the corresponding modules in that blueprint; installing this app does not install or start a robot stack.
 
 ### In a headset
 
@@ -367,13 +372,16 @@ Head and wrist messages from each XR frame share one acquisition timestamp.
 
 WebXR needs a secure context, and the headset must reach Desktop.
 
-- **Quest over USB**: `adb reverse tcp:5555 tcp:5555`, then open `http://localhost:5555/apps/dim-spatial-desktop/`
-  in the headset's browser.
-- **Any headset on the network**: give Desktop a certificate (`config.yaml`: `desktop: {tls: {cert, key, port: 5443}}`),
+- **Quest or Vision Pro over Wi-Fi**: give Desktop a certificate the headset trusts (`config.yaml`: `desktop: {tls: {cert, key, port: 5443}}`),
   turn network access on (`dimos-desktop password`), and open `https://<this machine>:5443/apps/dim-spatial-desktop/`.
+  The headset and Desktop must be able to reach each other over the network; no cable is needed.
+- **Optional Quest USB development**: `adb reverse tcp:5555 tcp:5555`, then open `http://localhost:5555/apps/dim-spatial-desktop/`
+  in the headset's browser.
 
 The VR and MIXED buttons appear in the command bar when the browser reports a headset.
-This was developed against an emulated headset (see below). It has not been run on a physical device yet.
+The app has been exercised with physical Quest and Vision Pro headsets, including Vision Pro hand tracking with Bluetooth Joy-Cons.
+The emulator below is also available for development. Tracking and camera latency depend on the headset, network and robot backend;
+the Load panel provides measurements for each viewer.
 
 ## Develop
 

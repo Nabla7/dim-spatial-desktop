@@ -87,8 +87,27 @@ export class Diagnostics extends EventTarget {
         gateway: stats, latency};
     });
     const intervals = this.intervals.splice(0), elapsed = intervals.reduce((sum, value) => sum + value, 0);
+    const controls = app.controls, xr = controls?.xr;
     return {clientId: this.id, at: Date.now(), userAgent: navigator.userAgent, immersive: !!app.xr.presenting,
       visibility: document.visibilityState, runId: app.blueprint.runId, connection: app.bus.state,
+      teleop: xr ? {
+        armed: controls.armed, enabled: xr.enabled, busy: xr.busy, mode: xr.mode, error: xr.error,
+        lease: fields(controls.lease, ['status', 'reason']),
+        sessionVisibility: app.xr.session?.visibilityState ?? null,
+        frameAgeMs: Number.isFinite(xr.lastFrame) ? Math.max(0, now - xr.lastFrame) : null,
+        inputs: [...(app.xr.session?.inputSources || [])].map(input => ({
+          side: input.handedness, hand: !!input.hand, grip: !!input.gripSpace,
+          ray: input.targetRayMode, profiles: [...(input.profiles || [])],
+        })),
+        hands: Object.fromEntries(Object.entries(xr.hands).map(([side, hand]) =>
+          [side, fields(hand, ['tracked', 'engaged', 'released', 'reason', 'published'])])),
+        calibration: {active: xr.calibration.status?.active ?? false, selected: xr.calibration.selected,
+          capturing: xr.calibrating, error: xr.calibration.error, readError: xr.calibration.readError},
+        publishers: [...controls.publishers].map(([key, {publisher}]) => ({key,
+          state: publisher.state, blocked: publisher.blocked, channel: publisher.channel?.readyState,
+          queuedBytes: publisher.channel?.bufferedAmount,
+        })),
+      } : null,
       display: {fps: elapsed > 0 ? intervals.length * 1000 / elapsed : null, frameMsP95: percentile(intervals, 0.95)},
       streams: Object.values(client?.stats || {}).map(entry => entry.gateway).filter(Boolean).map(stream => ({
         key: stream.key, type: stream.type, channel: stream.opts?.channel, encoding: stream.opts?.encoding,

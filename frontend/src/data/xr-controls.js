@@ -78,7 +78,7 @@ export class XRControls {
     this.resetHands();
   }
 
-  resetHands() { for (const side of SIDES) this.hands[side] = {released: false, tracked: false, engaged: false, input: null}; }
+  resetHands() { for (const side of SIDES) this.hands[side] = {released: false, tracked: false, engaged: false, input: null, reason: 'awaiting_frame', published: false}; }
   get ownsInputs() { return this.enabled || this.busy; }
   // The hands protocol reports its actual deadman; merely selecting hands must leave calibration/UI usable.
   get sceneInputLocked() {
@@ -257,11 +257,14 @@ export class XRControls {
       const was = `${hand.tracked}:${hand.released}:${hand.engaged}`;
       if (input !== hand.input) { hand.released = false; hand.engaged = false; hand.input = input; }
       hand.tracked = !!sample;
+      hand.reason = !input ? 'no_input_source' : hands && !wrist ? 'no_wrist_joint' : !pose ? 'no_pose'
+        : pose.emulatedPosition ? 'emulated_position' : !sample ? 'invalid_pose' : null;
+      hand.published = false;
       if (!sample) {
         this.neutral(side); hand.released = false; hand.engaged = false;
       } else if (hands) {
         // No clutch here: the pose is all this page knows of a hand.
-        c.publish(this.targets[side].pose, c.encode(this.targets[side].pose.type, sample.pose));
+        hand.published = c.publish(this.targets[side].pose, c.encode(this.targets[side].pose.type, sample.pose));
         c.publish(this.targets[side].joy, c.encode(this.targets[side].joy.type, sample.joy));
       } else {
         const pointer = c.app.pointers?.sources.get(input);
@@ -275,7 +278,7 @@ export class XRControls {
         hand.engaged = !this.calibrating && hand.released && held;
         if (!hand.released || uiBusy || this.calibrating) sample.joy = neutralJoy(side, captureTime);
         else if (overPanel) { sample.joy.axes[0] = sample.joy.axes[1] = 0; sample.joy.buttons[3] = 0; }
-        c.publish(this.targets[side].pose, c.encode(this.targets[side].pose.type, sample.pose));
+        hand.published = c.publish(this.targets[side].pose, c.encode(this.targets[side].pose.type, sample.pose));
         c.publish(this.targets[side].joy, c.encode(this.targets[side].joy.type, sample.joy));
       }
       changed ||= was !== `${hand.tracked}:${hand.released}:${hand.engaged}`;
