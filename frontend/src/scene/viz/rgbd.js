@@ -7,6 +7,7 @@
 import * as THREE from 'three';
 import {Layer} from '../layer.js';
 import {distortion, projectGlsl} from './camera-model.js';
+import {DEPTH_GRID_COLUMNS, meshDepthQuality} from './depth-budget.js';
 
 const surfaceVertex = /* glsl */`
 #include <clipping_planes_pars_vertex>
@@ -131,7 +132,10 @@ export class RgbdLayer extends CameraBase {
         lens: distortion(info.distortion_model, info.D), frameId: info.header?.frame_id || ''};
     }));
     // A scene mesh can lose detail/rate before the live camera used for manipulation.
-    this.listen(this.bus.subscribe(this.depthTopic.key, {delivery: 'latest', encoding: 'dimos_lcm_depth', maxHz: 15, bandwidthPriority: 0.25}, message => {
+    // Start cheaply until the first frame tells us its source dimensions, then request the detail
+    // the mesh can actually draw. This is a viewer subscription; sensor/recording pixels stay intact.
+    this.depthQuality = 0;
+    this.depthSubscription = this.listen(this.bus.subscribe(this.depthTopic.key, {delivery: 'latest', encoding: 'dimos_lcm_depth', maxHz: 15, bandwidthPriority: 0.25, encodeOptions: {quality: 0}}, message => {
       const depth = message.decoded;
       if (!depth?.data || !depth.width) return;
       this.frameId = message.header?.frameId || depth.frameId || this.frameId;
@@ -139,15 +143,24 @@ export class RgbdLayer extends CameraBase {
     }));
   }
 
+  stop() { super.stop(); this.depthSubscription = null; }
+
   setDepth(depth) {
     const {width, height, data} = depth;
+    const quality = meshDepthQuality(depth.sourceWidth || width), subscription = this.depthSubscription;
+    if (subscription?.update && quality !== this.depthQuality) {
+      this.depthQuality = quality;
+      subscription.update({encodeOptions: {quality}}).catch(() => {
+        if (this.depthSubscription === subscription) this.depthQuality = null;
+      });
+    }
     if (this.dims[0] !== width || this.dims[1] !== height) {
       this.depthTexture?.dispose();
       this.depthTexture = new THREE.DataTexture(new Float32Array(width * height), width, height, THREE.RedFormat, THREE.FloatType);
       this.depthTexture.minFilter = this.depthTexture.magFilter = THREE.NearestFilter;
       this.uniforms.depthMap.value = this.depthTexture; this.dims = [width, height];
       // The grid is at most 256 columns: finer than that is past what a headset resolves on a table.
-      const columns = Math.min(width, 256), rows = Math.max(2, Math.round(columns * height / width));
+      const columns = Math.min(width, DEPTH_GRID_COLUMNS), rows = Math.max(2, Math.round(columns * height / width));
       this.grid?.geometry.dispose(); this.grid?.removeFromParent();
       const geometry = new THREE.PlaneGeometry(1, 1, columns - 1, rows - 1), uv = geometry.attributes.uv;
       // PlaneGeometry's v runs bottom to top; image rows run top to bottom.
