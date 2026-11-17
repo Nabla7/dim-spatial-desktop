@@ -24,12 +24,14 @@ every panel and every hologram is built from what the dimos gateway says is runn
   | `sensor_msgs.PointCloud2` | points coloured by height (a dense map as dots, a scan as light) |
   | depth `Image` + colour `Image` + `CameraInfo` | a textured surface where the camera sees it |
   | `sensor_msgs.Image` alone | a frustum with the picture on its far end |
-  | URDF from `UrdfManager` (`/render_file_request`, `/file_info`) | the robot as a hologram or a solid; other models as scenery |
+  | USD or URDF (`/render_file_request`, `/file_info`) | the robot as a hologram or a solid, with each body following tf |
   | `nav_msgs.Odometry`, `PoseStamped` | a marker with a trail |
   | `nav_msgs.Path`, `nav_msgs.OccupancyGrid` | a line, a textured plane |
   | `tf2_msgs.TFMessage` | frame axes |
 
   A camera's row has **SCREEN**: the camera as a screen of its own (below).
+  Live USD models use the scene converter to produce glTF in each body's local frame.
+  The app caches the received model and its assets; it never changes the simulation's description.
 - **Control**: the robot's controls, found from the blueprint (below).
 - **Record**: episodes for training, when the blueprint records them: start, save, discard (below).
 - **Agent**: a chat with Claude Code or Codex on this machine, or with the agent of an agentic blueprint (below).

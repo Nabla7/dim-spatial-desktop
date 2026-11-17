@@ -9,6 +9,7 @@
 // robot in it, kept under `scenes/imported` with a manifest. To run a robot in a scene, the same dimos
 // puts the robot of a sim2 blueprint in it and the launch is given that file.
 import { type Answer, container, dirname, exists, follow, home, type Job, json, PythonWorker, readJson, type Runtime, shortHash } from "./worker.ts";
+import { LiveModels } from "./live-models.ts";
 
 export type ScenesApp = { dataDir?: string; dimosDir?: string; dimosPython?: string };
 type Scene = { id: string; name: string; manifest: string | null; usd: string; project: string; where: string; added: boolean; at: number };
@@ -51,6 +52,7 @@ export class Scenes {
   #jobs = new Map<string, Job>();
   #diffs = new Map<string, unknown>();
   #children = new Set<Deno.ChildProcess>();
+  #live: LiveModels | null = null;
 
   constructor(app: ScenesApp) {
     this.#app = app;
@@ -509,6 +511,10 @@ export class Scenes {
   async handle(request: Request, parts: string[], url: URL): Promise<Response> {
     const method = request.method;
     try {
+      if (parts[0] === "live") {
+        this.#live ??= new LiveModels(`${this.#store}/live`, () => this.#python());
+        return await this.#live.handle(request, parts.slice(1).map(decodeURIComponent));
+      }
       if (parts[0] !== "library") return json({ error: "not found" }, 404);
       if (parts.length === 1 && method === "GET") {
         const scenes = await this.list(url.searchParams.has("rescan"));

@@ -28,6 +28,13 @@ async function request(path, {method = 'GET', body, timeout = 15000} = {}) {
 
 const segment = encodeURIComponent;
 
+async function upload(path, bytes) {
+  const response = await fetch(url(path), {method: 'POST', body: bytes, signal: AbortSignal.timeout(120000)});
+  const data = await response.json();
+  if (!response.ok) throw new GatewayError(response.status, data.error || `HTTP ${response.status}`);
+  return data;
+}
+
 // An answer of this app's server that carries bytes: [uint32 length of a JSON header][header][bytes].
 // The header is padded so the bytes start on a multiple of four and can be viewed as typed arrays.
 async function binary(path, {timeout = 120000} = {}) {
@@ -47,6 +54,12 @@ async function binary(path, {timeout = 120000} = {}) {
 }
 
 export const gateway = {
+  liveModel: {
+    prepare: bytes => upload('api/scenes/live', bytes),
+    asset: (id, key, bytes) => upload(`api/scenes/live/${segment(id)}/assets/${segment(key)}`, bytes),
+    build: id => request(`api/scenes/live/${segment(id)}/build`, {method: 'POST', timeout: 120000}),
+    file: id => url(`api/scenes/live/${segment(id)}/file/model.glb`).href,
+  },
   // -- the running blueprint ------------------------------------------------------------------------
   active: () => request('../../gateways/dimos/active'),
   modules: () => request('../../gateways/dimos/active/modules'),

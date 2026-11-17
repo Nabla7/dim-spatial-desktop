@@ -1,4 +1,4 @@
-// The robot's own shape. dimos's UrdfManager answers a request on /render_file_request with the URDF
+// The robot's own shape. Model providers answer /render_file_request with USD or URDF
 // and then each mesh it names on /file_info, and puts every link on tf; so the model is built from the
 // URDF's visuals and each link simply sits at its tf frame. Drawn as a hologram (a lit rim over a faint
 // fill) or as a solid, the user's choice.
@@ -120,6 +120,7 @@ export class RobotLayer extends Layer {
     this.requestTopic = request; this.links = new Map(); this.pending = new Map(); this.queue = [];
     this.style = 'holo'; this.model = null; this.models = new Map(); this.asked = new Set(); this.loaded = 0; this.total = 0;
     this.uniforms = {time: {value: 0}}; this.materials = []; this.triangles = 0; this.wanted = new Set(); this.tries = new Map(); this.sizes = new Set(); this.jointLimits = {};
+    this.usdAssets = new Map(); this.usdLoading = false; this.generation = 0;
   }
 
   // scenery: a model that is the surroundings rather than the robot is drawn fainter, and never hides the robot.
@@ -144,7 +145,7 @@ export class RobotLayer extends Layer {
     this.findModels();
   }
 
-  stop() { super.stop(); clearInterval(this.timer); this.publisher = null; this.files = null; }
+  stop() { super.stop(); clearInterval(this.timer); this.publisher = null; this.files = null; this.generation++; this.usdLoading = false; }
 
   // Every answer on /file_info goes to everyone listening, whoever asked. So this layer listens only
   // while it is owed something: another page loading ten thousand collision meshes then costs this one nothing.
@@ -172,7 +173,10 @@ export class RobotLayer extends Layer {
     if (owed) this.idleSince = now;
     this.listenForFiles(owed || now - (this.idleSince || 0) < 3000);
     if (!this.files) { this.touch(); return; }
-    if (!this.model) { if (now - (this.lastAsk || 0) > 2500) this.ask('*.urdf'); return; }
+    if (!this.model && !this.usdLoading) {
+      if (now - (this.lastAsk || 0) > 2500) { this.ask('*.urdf'); this.ask('*.usda'); }
+      return;
+    }
     for (const name of this.names || []) if (!this.asked.has(name)) { this.asked.add(name); this.wanted.add(`${name}.urdf`); }
     for (const uri of this.wanted) {
       if (now - (this.pending.get(uri) || 0) < 4000 || !quiet) continue;
@@ -190,6 +194,29 @@ export class RobotLayer extends Layer {
   }
 
   receive(file) {
+    if (/\.(usd|usda)$/.test(file.uri)) {
+      this.pending.delete(file.uri);
+      if (this.model || this.usdLoading) return;
+      this.usdLoading = true;
+      this.pending.delete('*.urdf');
+      this.lastFile = performance.now();
+      this.loadUsd(() => gateway.liveModel.prepare(file.data));
+      return;
+    }
+    if (this.usdAssets.has(file.uri)) {
+      const key = this.usdAssets.get(file.uri);
+      this.usdAssets.delete(file.uri); this.pending.delete(file.uri); this.wanted.delete(file.uri);
+      this.lastFile = performance.now();
+      const generation = this.generation;
+      this.usdUploads ??= new Set();
+      const upload = gateway.liveModel.asset(this.usdId, key, file.data);
+      this.usdUploads.add(upload);
+      upload.then(() => {
+        this.usdUploads.delete(upload);
+        if (generation === this.generation && !this.usdAssets.size && !this.usdUploads.size) this.loadUsd(() => gateway.liveModel.build(this.usdId));
+      }).catch(error => this.usdFailed(error));
+      return;
+    }
     if (file.uri.endsWith('.urdf')) {
       this.pending.delete(file.uri); this.wanted.delete(file.uri);
       // Other pages ask for URDFs too and every answer is broadcast: one already held is recognised by its size.
@@ -207,6 +234,53 @@ export class RobotLayer extends Layer {
     this.pending.delete(file.uri); this.queue = this.queue.filter(uri => uri !== file.uri);
     meshCache.put(file.uri, file.data);
     this.accept(file.uri, file.data);
+  }
+
+  usdFailed(error) {
+    this.usdLoading = false; this.detail = `USD: ${error.message}`; this.lastAsk = performance.now();
+    console.warn('live USD model:', error); this.layers.emit();
+  }
+
+  async loadUsd(prepare) {
+    const generation = this.generation;
+    this.detail = 'Loading USD model';
+    try {
+      const model = await prepare();
+      if (generation !== this.generation) return;
+      this.usdId = model.id;
+      if (!model.ready) {
+        for (const {name, key} of model.assets) { this.usdAssets.set(name, key); this.wanted.add(name); }
+        return;
+      }
+      const gltf = await new GLTFLoader().loadAsync(gateway.liveModel.file(model.id));
+      if (generation !== this.generation) return;
+      const meshes = [];
+      gltf.scene.traverse(child => { if (child.isMesh) meshes.push(child); });
+      for (const child of meshes) {
+        const triangles = (child.geometry.index?.count ?? child.geometry.attributes.position.count) / 3;
+        if (this.triangles + triangles > TRIANGLE_BUDGET) {
+          this.skipped = (this.skipped || 0) + 1; child.geometry.dispose(); child.material.dispose(); continue;
+        }
+        this.triangles += triangles;
+        const frame = child.userData.frame || '';
+        let group = this.links.get(frame);
+        if (!group) {
+          group = new THREE.Group(); group.name = frame; group.matrixAutoUpdate = false;
+          this.links.set(frame, group); this.object.add(group);
+        }
+        const holder = new THREE.Group(); holder.rotation.x = Math.PI / 2;
+        const original = child.material, color = original.color.clone().convertLinearToSRGB();
+        const styles = this.material([color.r, color.g, color.b], !frame);
+        // Keep the USD's solid material (including its textures); hologram styling is optional.
+        styles.solid.dispose(); styles.solid = this.stage.clip(original);
+        this.materials.at(-1).solid = styles.solid;
+        child.userData.materials = styles; child.material = styles[this.style];
+        holder.add(child); group.add(holder);
+      }
+      this.model = {links: model.frames.map(link => ({link}))};
+      this.pending.clear(); this.wanted.clear(); this.usdLoading = false;
+      this.detail = `${model.frames.length} links`; this.layers.emit();
+    } catch (error) { if (generation === this.generation) this.usdFailed(error); }
   }
 
   // "*.urdf" is answered with one model. A UrdfManager given several (a robot and the room it stands in)
@@ -296,6 +370,7 @@ export class RobotLayer extends Layer {
   update(now) {
     this.uniforms.time.value = now / 1000;
     for (const [link, group] of this.links) {
+      if (!link) { group.visible = true; continue; }
       const pose = this.tf.knows(link) ? this.tf.lookup(link) : null;
       group.visible = !!pose;
       if (pose) { group.matrix.copy(pose); group.matrixWorldNeedsUpdate = true; }
