@@ -1,0 +1,75 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Diagnostics integration fixture</title>
+<script type="module">
+import {connect, TraceRecorder} from '/client.js';
+import * as THREE from '../frontend/vendor/three/three.module.min.js';
+import {Diagnostics} from '../frontend/src/data/diagnostics.js';
+
+window.startFixture = async ({gatewayUrl, run, mode = 'trace', viewOnly = false}) => {
+  const trace = mode === 'off' ? undefined : new TraceRecorder(run);
+  const client = await connect(gatewayUrl, {diagnostics: trace, iceServers: [], heartbeatHz: 5});
+  const feeds = new Map();
+  const app = {bus: {trace, client}, layers: {feeds: {feeds}}};
+  const diagnostics = new Diagnostics(app);
+  // Full UI inventory is outside this fixture; retain the actual video and
+  // upload callbacks. Their timers and buffers are managed by Diagnostics.
+  clearTimeout(diagnostics.timer);
+  const renderer = new THREE.WebGLRenderer(); renderer.setSize(960, 240);
+  document.body.append(renderer.domElement);
+  const scene = new THREE.Scene(), camera = new THREE.OrthographicCamera(-4, 4, 1, -1, 0.1, 10);
+  camera.position.z = 2;
+  for (const [index, name] of ['head', 'left', 'right'].entries()) {
+  const video = document.createElement('video'); video.autoplay = true; video.muted = true; video.playsInline = true;
+  const texture = new THREE.VideoTexture(video);
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2.5, 1.8), new THREE.MeshBasicMaterial({map:texture}));
+  mesh.position.x = (index - 1) * 2.6;
+  scene.add(mesh);
+  const key = `diagnostic-browser/camera-${name}`;
+  const subscription = client.subscribe(key, {encoding:'diagnostic-pattern', channel:'video-h264'}, message => {
+    if (message.mediaStream && video.srcObject !== message.mediaStream) {
+      video.srcObject = message.mediaStream; video.play();
+    }
+  });
+  await subscription.ready();
+  const feed = {key, subscription, video, texture}; feeds.set(key, feed);
+  diagnostics.watch(feed);
+  }
+  let rendering = true, frame;
+  const draw = now => {
+    diagnostics.frame(now);
+    if (rendering) {renderer.render(scene, camera); diagnostics.submitted(false);}
+    frame = requestAnimationFrame(draw);
+  };
+  frame = requestAnimationFrame(draw);
+  const commandKeys = viewOnly ? [] : ['left', 'right'].map(side => `diagnostic-browser/control-${side}`);
+  const lease = viewOnly ? null : await client.lease({group:'diagnostic-browser', publish:commandKeys});
+  const publishers = await Promise.all(commandKeys.map(async key => {
+    const publisher = client.publisher(key, {delivery:'reliable'}); await publisher.ready(); return publisher;
+  }));
+  let inputTimer;
+  window.fixture = {
+    client, trace, diagnostics, feeds,
+    command(value) {
+      for (const [index, commandKey] of commandKeys.entries()) {
+      const context = trace?.sample(commandKey);
+      trace?.event('operator.input',context,{channel:commandKey});
+      publishers[index].put(new TextEncoder().encode(JSON.stringify({position:value, sampledMs:performance.now()})), {context});
+      }
+    },
+    rendering(value) {rendering=value;},
+    startInputs() {inputTimer = setInterval(() => this.command(Math.sin(performance.now() / 2000) * 0.1), 1000 / 60);},
+    stopInputs() {clearInterval(inputTimer);},
+    async flush() {await diagnostics.traceSample();},
+    async close() {
+      cancelAnimationFrame(frame);
+      clearInterval(inputTimer);
+      for (const feed of feeds.values()) diagnostics.unwatch(feed,diagnostics.watches.get(feed));
+      diagnostics.stop(); if (trace) await diagnostics.traceUpload.flush(trace);
+      for (const publisher of publishers) publisher.close();
+      for (const feed of feeds.values()) {feed.subscription.close(); feed.texture.dispose();}
+      await lease?.release(); client.close(); renderer.dispose();
+    },
+  };
+};
+</script>

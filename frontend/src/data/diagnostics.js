@@ -1,4 +1,5 @@
 import {gateway} from './gateway.js';
+import {TraceUpload} from './trace-upload.js';
 
 export function rate(previous, current, seconds) {
   return Number.isFinite(previous) && Number.isFinite(current) && current >= previous && seconds > 0 ? (current - previous) / seconds : null;
@@ -24,15 +25,19 @@ export class Diagnostics extends EventTarget {
     this.watches = new Map(); this.previous = new Map(); this.intervals = []; this.lastFrame = null;
     this.lastSample = performance.now(); this.stopped = false; this.generation = 0;
     this.timer = setTimeout(() => this.sample(), 2000);
+    this.traceUpload = new TraceUpload(gateway.reportTrace);
+    this.traceTimer = setTimeout(() => this.traceSample(), 250);
     addEventListener('pagehide', () => this.stop());
     addEventListener('pageshow', () => {
       if (!this.stopped) return;
       this.stopped = false; this.lastFrame = null; this.intervals = []; this.lastSample = performance.now();
       this.timer = setTimeout(() => this.sample(), 2000);
+      this.traceTimer = setTimeout(() => this.traceSample(), 250);
     });
   }
 
   frame(now) {
+    this.app.bus.trace?.tick();
     if (this.lastFrame !== null) this.intervals.push(now - this.lastFrame);
     this.lastFrame = now;
     if (this.intervals.length > 1000) this.intervals.shift();
@@ -52,17 +57,29 @@ export class Diagnostics extends EventTarget {
     if (feed.video.requestVideoFrameCallback) {
       watch.stopLatency = feed.subscription?.watchVideoLatency?.(feed.video);
       const shown = (now, metadata) => {
+        watch.lastRtp = metadata.rtpTimestamp;
         watch.shown++; watch.lastShown = now; watch.decodeMs = metadata.processingDuration == null ? null : metadata.processingDuration * 1000;
         watch.handle = feed.video.requestVideoFrameCallback(shown);
       };
       watch.handle = feed.video.requestVideoFrameCallback(shown);
     }
+    const previousUpdate = feed.texture.onUpdate;
+    watch.previousUpdate = previousUpdate;
+    feed.texture.onUpdate = (...args) => {
+      previousUpdate?.(...args);
+      watch.textureRtp = watch.lastRtp;
+      watch.textureUpdated = true;
+      feed.subscription.traceVideoFrame?.(watch.textureRtp, 'video.texture_upload', {correlation_basis: 'latest_presented_frame', physical_display: false});
+    };
     this.watches.set(feed, watch);
     return watch;
   }
 
   unwatch(feed, watch) {
     watch.stopLatency?.();
+    this.app?.bus?.trace?.unwatch(`video/${feed.key}`);
+    for (const stage of ['video.texture_upload', 'video.render_submit', 'video.xr_submit']) this.app?.bus?.trace?.unwatch(`${stage}/${feed.key}`);
+    if (feed.texture) feed.texture.onUpdate = watch.previousUpdate;
     if (watch.handle !== null) feed.video.cancelVideoFrameCallback(watch.handle);
     this.watches.delete(feed); this.previous.delete(feed.key);
   }
@@ -161,6 +178,26 @@ export class Diagnostics extends EventTarget {
       cameras: cameraReports};
   }
 
+  submitted(immersive) {
+    const trace = this.app.bus.trace;
+    if (!trace) return;
+    for (const [feed, watch] of this.watches) {
+      // A texture update proves the renderer used the texture this frame. Do not
+      // count every watched/hidden panel as an XR submission on every display tick.
+      if (!watch.textureUpdated) continue;
+      watch.textureUpdated = false;
+      feed.subscription.traceVideoFrame?.(watch.textureRtp, immersive ? 'video.xr_submit' : 'video.render_submit', {physical_display: false, correlation_basis:'latest_uploaded_frame'});
+    }
+  }
+
+  async traceSample() {
+    const generation = this.generation;
+    this.app.bus.trace?.tick();
+    try { await this.traceUpload.flush(this.app.bus.trace); this.traceError = null; }
+    catch (error) { this.traceError = error.message; }
+    if (!this.stopped && generation === this.generation) this.traceTimer = setTimeout(() => this.traceSample(), 250);
+  }
+
   async sample() {
     const generation = this.generation;
     try {
@@ -182,6 +219,7 @@ export class Diagnostics extends EventTarget {
 
   stop() {
     this.stopped = true; this.generation++; clearTimeout(this.timer);
+    clearTimeout(this.traceTimer);
     for (const [feed, watch] of this.watches) this.unwatch(feed, watch);
   }
 }

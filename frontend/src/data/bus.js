@@ -38,14 +38,17 @@ export class Bus extends EventTarget {
     try {
       this.info = await gateway.zenoh();
       if (!this.info.enabled || !this.info.up) throw new Error(this.info.error || 'the zenoh gateway is off (Desktop: Settings)');
-      const [{connect}, msgs] = await Promise.all([
+      const [{connect, TraceRecorder}, msgs] = await Promise.all([
         import(new URL(this.info.client, location.href).href),
         import(new URL('../../gateways/dimos/msgs.js', location.href).href),
       ]);
       this.msgs = msgs;
+      const diagnosticRun = new URL(location.href).searchParams.get('diagnosticsRun');
+      if (diagnosticRun && !TraceRecorder) throw new Error('This gateway client does not support the requested diagnostic capture');
+      this.trace = diagnosticRun ? new TraceRecorder(diagnosticRun) : null;
       // The heartbeat is what a publisher's deadman hangs on: if this page stops (a crash, a dead link),
       // the gateway publishes the stored stop value for every drive it had armed.
-      this.client = await connect(new URL(this.info.zenohGatewayUrl, location.href).href, {heartbeatHz: 5, heartbeatMisses: 3});
+      this.client = await connect(new URL(this.info.zenohGatewayUrl, location.href).href, {heartbeatHz: 5, heartbeatMisses: 3, ...(this.trace ? {diagnostics: this.trace} : {})});
       this.state = this.client.state;
       this.client.onState(state => { this.state = state; this.dispatchEvent(new Event('state')); });
       this.dispatchEvent(new Event('state'));

@@ -10,6 +10,7 @@ import { methodSource } from "./source.ts";
 import { Replay } from "./replay.ts";
 import { Scenes } from "./scenes.ts";
 import { Diagnostics } from "./diagnostics.ts";
+import { TraceStore } from "./trace.ts";
 
 const app = JSON.parse(Deno.env.get("DIMOS_APP") ?? "{}");
 const flag = (name: string) => { const index = Deno.args.indexOf(name); return index >= 0 ? Deno.args[index + 1] : undefined; };
@@ -19,6 +20,7 @@ const desktopUrl = app.desktopUrl ?? "http://127.0.0.1:5555";
 const replay = new Replay(app);
 const scenes = new Scenes(app);
 const diagnostics = new Diagnostics();
+const traces = new TraceStore(Deno.env.get("DIMOS_DIAGNOSTICS_DIR") ?? (app.dataDir ? `${app.dataDir}/diagnostics` : undefined));
 
 const TYPES: Record<string, string> = {
   html: "text/html; charset=utf-8", js: "text/javascript; charset=utf-8", mjs: "text/javascript; charset=utf-8", css: "text/css; charset=utf-8",
@@ -186,6 +188,7 @@ async function agentApi(request: Request, parts: string[]): Promise<Response> {
 function handler(request: Request): Response | Promise<Response> {
   const url = new URL(request.url), parts = url.pathname.split("/").filter(Boolean);
   if (parts[0] === "api") {
+    if (parts[1] === "diagnostics" && parts[2] === "trace" && parts.length === 3) return traces.handle(request);
     if (parts[1] === "diagnostics" && parts.length === 2) return diagnostics.handle(request);
     if (parts[1] === "agent") return agentApi(request, parts.slice(2));
     if (parts[1] === "version" && request.method === "GET") return version().then((stamp) => json({ stamp }));

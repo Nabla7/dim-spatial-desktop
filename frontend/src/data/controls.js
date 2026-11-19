@@ -233,7 +233,7 @@ export class Controls extends EventTarget {
     return entry;
   }
 
-  publish(target, bytes) {
+  publish(target, bytes, context) {
     if (!bytes || !this.bus.live) return false;
     const entry = this.entry(target), now = performance.now();
     const metrics = entry.metrics ??= {attempts: 0, offered: 0, skipped: {}, maxAttemptGapMs: 0, lastAttemptAt: null};
@@ -241,7 +241,7 @@ export class Controls extends EventTarget {
     metrics.lastAttemptAt = now; metrics.attempts++;
     const skip = reason => { metrics.skipped[reason] = (metrics.skipped[reason] || 0) + 1; metrics.lastSkip = {reason, at: Date.now()}; return false; };
     const put = () => {
-      try { entry.publisher.put(bytes); metrics.offered++; return true; }
+      try { entry.publisher.put(bytes, context ? {context} : undefined); metrics.offered++; return true; }
       catch (error) { console.warn(`publish ${target.topic}:`, error.message); return skip('put_error'); }
     };
     const taking = this.claim(target.key);

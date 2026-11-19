@@ -263,7 +263,10 @@ export class XRControls {
     this.trace.sequence = (this.trace.sequence + 1) >>> 0;
     const publish = (target, message) => {
       message.header.seq = this.trace.sequence;
-      return c.publish(target, c.encode(target.type, message));
+      const trace = c.bus.trace, context = trace?.sample(target.key);
+      trace?.event('operator.input', context, {input: 'webxr', channel: target.key, frame_time_ms: now});
+      const encoded = c.encode(target.type, message);
+      return c.publish(target, encoded, context);
     };
     if (this.targets.head) {
       const head = headSample(frame.getViewerPose?.(reference), captureTime);

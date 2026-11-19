@@ -301,6 +301,7 @@ export class App extends EventTarget {
     this.dock.update(now, dt);
     this.backdrop.update(time / 1000, this.renderer);
     if (xrFrame) this.renderer.render(this.scene, this.camera); else this.renderFlat();
+    this.diagnostics.submitted(!!xrFrame);
   }
 
   // On a screen the panels ride with the camera, a metre in front of it, and what is on the table can come

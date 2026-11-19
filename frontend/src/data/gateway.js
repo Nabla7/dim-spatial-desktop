@@ -144,4 +144,10 @@ export const gateway = {
   reportView: (app, view) => request(`../../gateways/desktop/views/${segment(app)}`, {method: 'PUT', body: view}),
   reportDiagnostics: report => request('api/diagnostics', {method: 'POST', body: report, timeout: 3000}),
   diagnostics: () => request('api/diagnostics', {timeout: 3000}),
+  reportTrace: async (body, gzip) => {
+    const response = await fetch(url('api/diagnostics/trace'), {method: 'POST', body, signal: AbortSignal.timeout(3000),
+      headers: {'content-type':'application/json', ...(gzip ? {'content-encoding':'gzip'} : {})}});
+    if (!response.ok) throw new GatewayError(response.status, 'diagnostic upload failed');
+    return response.json();
+  },
 };
