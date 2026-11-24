@@ -9,7 +9,6 @@ import {RgbdLayer, CameraLayer} from './viz/rgbd.js';
 import {RobotLayer} from './viz/robot.js';
 import {FramesLayer} from './viz/frames.js';
 import {PoseLayer, PathLayer, GridLayer} from './viz/nav.js';
-import {deliveryRate} from './stream-health.js';
 
 const POSE_TYPES = ['nav_msgs.Odometry', 'geometry_msgs.PoseStamped', 'geometry_msgs.PoseWithCovarianceStamped'];
 const IMAGE_TYPES = ['sensor_msgs.Image', 'sensor_msgs.CompressedImage', 'foxglove_msgs.CompressedVideo'];
@@ -150,17 +149,9 @@ export class Layers extends EventTarget {
       const waited = now - (this.firstData || (this.firstData = now)), robot = [...this.layers.values()].some(layer => layer.kind === 'robot' && layer.visible);
       if (waited > 1500 && (!robot || this.robotPosition() || waited > 8000)) this.framed = this.frameAll();
     }
-    // Watchdog, every two seconds: a shown layer whose topic is publishing but which has heard nothing lately.
-    if (now - (this.checkedAt || 0) > 2000) {
-      this.checkedAt = now;
-      for (const layer of this.layers.values()) {
-        const sourceRate = layer.topic ? this.app.blueprint.topics.get(layer.topic.key)?.hz || 0 : 0;
-        const rate = deliveryRate(layer.topic?.key, sourceRate, layer.subscriptions);
-        if (!layer.visible || layer.kind === 'robot' || sourceRate < 0.5 || rate <= 0) continue;
-        const silence = now - Math.max(layer.lastAt, layer.restartedAt || 0, layer.shownAt || 0);
-        if (silence > 8000 + 4000 / rate) { console.warn(`layer ${layer.label}: no data for ${Math.round(silence / 1000)} s with ${rate.toFixed(1)} Hz allocated; subscribing again`); layer.restart(); }
-      }
-    }
+    // The gateway owns negotiation, reconnect and stream recovery. A source's rate
+    // does not mean this viewer has finished negotiating or has bandwidth allocated:
+    // restarting layers on silence cancels pending tracks and starts that work over.
     // A robot that drives is kept at the middle of the table until the user takes hold of the world.
     if (this.autoFollow && !this.follow) { const root = this.robotRoot(); if (root && this.tf.knows(root)) { this.follow = root; this.emit(); } }
     if (this.follow) {

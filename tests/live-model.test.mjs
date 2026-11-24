@@ -11,6 +11,20 @@ const THREE = await import('three');
 const {GLTFLoader} = await import('three/addons/loaders/GLTFLoader.js');
 const {RobotLayer} = await import('../frontend/src/scene/viz/robot.js');
 const {gateway} = await import('../frontend/src/data/gateway.js');
+const {Layers} = await import('../frontend/src/scene/layers.js');
+
+test('a publishing source does not cancel the gateway negotiation of a quiet viewer', () => {
+  const app = {bus: new EventTarget(), blueprint: new EventTarget(),
+    stage: {world: new THREE.Group()}, theme: {}};
+  app.blueprint.topics = new Map([['camera', {hz: 30}]]);
+  const layers = new Layers(app); layers.framed = true; layers.autoFollow = false;
+  let restarts = 0;
+  layers.layers.set('camera', {visible: true, topic: {key: 'camera'}, subscriptions: [],
+    lastAt: 0, shownAt: 0, update() {}, restart() { restarts++; }});
+  layers.update(0.02, 30000);
+  layers.update(0.02, 60000);
+  assert.equal(restarts, 0);
+});
 
 test('a live USD body follows TF and keeps the source solid material', async t => {
   const pose = new THREE.Matrix4().makeTranslation(2, 3, 4);
