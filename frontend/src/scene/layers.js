@@ -12,7 +12,7 @@ import {PoseLayer, PathLayer, GridLayer} from './viz/nav.js';
 import {deliveryRate} from './stream-health.js';
 
 const POSE_TYPES = ['nav_msgs.Odometry', 'geometry_msgs.PoseStamped', 'geometry_msgs.PoseWithCovarianceStamped'];
-const IMAGE_TYPES = ['sensor_msgs.Image', 'sensor_msgs.CompressedImage'];
+const IMAGE_TYPES = ['sensor_msgs.Image', 'sensor_msgs.CompressedImage', 'foxglove_msgs.CompressedVideo'];
 const isDepth = topic => /depth/i.test(topic.topic);
 
 export class Layers extends EventTarget {
@@ -105,7 +105,7 @@ export class Layers extends EventTarget {
     }
     // The transform tree is always fed while something runs: every other layer is placed by it.
     for (const subscription of this.tfSubscriptions) subscription.close();
-    this.tfSubscriptions = tfTopics.map(topic => this.bus.subscribeDecoded(topic.key, {delivery: 'reliable'}, message => this.tf.add(message, performance.now())));
+    this.tfSubscriptions = tfTopics.map(topic => this.bus.subscribeDecoded(topic.key, {delivery: 'reliable', bandwidthPriority: 4}, message => this.tf.add(message, performance.now())));
     if (!tfTopics.length) this.tf.clear();
     if (!blueprint.running) { this.tf.clear(); this.framed = false; this.firstData = 0; this.follow = null; this.autoFollow = true; }
     this.emit();
@@ -143,6 +143,7 @@ export class Layers extends EventTarget {
   }
 
   update(dt, now) {
+    this.feeds.setInteractive(!!this.app.controls?.armed);
     for (const layer of this.layers.values()) if (layer.visible) layer.update(now, dt);
     // The first framing waits a moment for data, and for the robot's pose when there is a robot to wait for.
     if (!this.framed && this.layers.size) {

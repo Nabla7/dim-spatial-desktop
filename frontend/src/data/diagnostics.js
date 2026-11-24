@@ -31,10 +31,17 @@ export class Diagnostics extends EventTarget {
 
   watch(feed) {
     let watch = this.watches.get(feed);
-    if (watch) return watch;
-    watch = {shown: 0, lastShown: null, handle: null, stopLatency: null};
+    if (watch) {
+      if (watch.subscription !== feed.subscription) {
+        watch.stopLatency?.();
+        watch.subscription = feed.subscription;
+        watch.stopLatency = feed.subscription?.watchVideoLatency?.(feed.video);
+      }
+      return watch;
+    }
+    watch = {shown: 0, lastShown: null, handle: null, stopLatency: null, subscription: feed.subscription};
     if (feed.video.requestVideoFrameCallback) {
-      watch.stopLatency = feed.subscription.watchVideoLatency?.(feed.video);
+      watch.stopLatency = feed.subscription?.watchVideoLatency?.(feed.video);
       const shown = (now, metadata) => {
         watch.shown++; watch.lastShown = now; watch.decodeMs = metadata.processingDuration == null ? null : metadata.processingDuration * 1000;
         watch.handle = feed.video.requestVideoFrameCallback(shown);
@@ -61,7 +68,7 @@ export class Diagnostics extends EventTarget {
     const connection = rtc.find(stat => stat.type === 'transport' && stat.selectedCandidatePairId);
     const pair = rtc.find(stat => stat.id === connection?.selectedCandidatePairId) || rtc.find(stat => stat.type === 'candidate-pair' && stat.nominated && stat.state === 'succeeded');
     const cameraReports = feeds.map(feed => {
-      const watch = this.watch(feed), previous = this.previous.get(feed.key), stats = feed.subscription.gatewayStats;
+      const watch = this.watch(feed), previous = this.previous.get(feed.key), stats = feed.subscription?.gatewayStats;
       const track = feed.video.srcObject?.getVideoTracks()[0];
       const received = rtc.find(stat => stat.type === 'inbound-rtp' && stat.kind === 'video' && stat.trackIdentifier === track?.id);
       const counters = {shown: watch.shown, input: stats?.stats?.received, sent: stats?.stats?.sent, decoded: received?.framesDecoded, received: received?.framesReceived,
@@ -71,7 +78,7 @@ export class Diagnostics extends EventTarget {
       const jitterCount = delta('jitterCount'), decoded = delta('decoded');
       const sameSubscription = previous?.subscription === stats?.id;
       this.previous.set(feed.key, {...counters, receiver: received?.id, subscription: stats?.id});
-      const latency = feed.subscription.videoLatency?.(10000) ?? null;
+      const latency = feed.subscription?.videoLatency?.(10000) ?? null;
       return {key: feed.key, width: feed.video.videoWidth, height: feed.video.videoHeight,
         // Measure this stream's input directly; the optional topic counter may be absent or stale.
         sourceFps: sameSubscription ? rate(previous?.input, counters.input, seconds) : null,

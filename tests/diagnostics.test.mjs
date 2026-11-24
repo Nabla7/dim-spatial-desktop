@@ -20,6 +20,19 @@ test('closing a feed cancels both presentation watchers and discards its counter
   assert.equal(diagnostics.watches.size, 0); assert.equal(diagnostics.previous.size, 0);
 });
 
+test('video latency observation follows receivers across hiding and resubscribing', () => {
+  const diagnostics = Object.create(Diagnostics.prototype); diagnostics.watches = new Map();
+  let stops = 0, starts = 0;
+  const subscription = () => ({watchVideoLatency: () => { starts++; return () => { stops++; }; }});
+  const feed = {video: {requestVideoFrameCallback: () => 1}, subscription: subscription()};
+  const watch = diagnostics.watch(feed);
+  assert.equal(starts, 1);
+  feed.subscription = null;
+  assert.equal(diagnostics.watch(feed), watch); assert.equal(stops, 1);
+  feed.subscription = subscription(); diagnostics.watch(feed);
+  assert.equal(starts, 2); assert.equal(stops, 1);
+});
+
 test('viewer telemetry measures display separately from gateway sends and unavailable browser counters', async () => {
   const diagnostics = Object.create(Diagnostics.prototype), feed = {key: 'camera', video: {videoWidth: 640, videoHeight: 480}, subscription: {gatewayStats: {id: 1, stats: {received: 120, sent: 90}}}};
   diagnostics.id = 'viewer'; diagnostics.lastSample = performance.now() - 2000; diagnostics.intervals = [20, 20, 20];
@@ -43,5 +56,9 @@ test('viewer telemetry measures display separately from gateway sends and unavai
   const reconnect = await diagnostics.collect();
   assert.equal(reconnect.cameras[0].sourceFps, null);
   assert.equal(reconnect.cameras[0].sentFps, null);
+  feed.subscription = null;
+  const hidden = await diagnostics.collect();
+  assert.equal(hidden.cameras[0].latency, null);
+  assert.equal(hidden.cameras[0].sourceFps, null);
   delete globalThis.document;
 });

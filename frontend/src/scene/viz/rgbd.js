@@ -91,7 +91,7 @@ class CameraBase extends Layer {
   }
 
   startCamera() {
-    if (this.colorTopic) this.feed = this.layers.feeds.acquire(this.colorTopic);
+    if (this.colorTopic) this.feed = this.layers.feeds.acquire(this.colorTopic, 'preview');
     if (this.infoTopic) this.listen(this.bus.subscribeDecoded(this.infoTopic.key, {delivery: 'latest', maxHz: 1}, info => {
       if (!info.K || !(info.K[0] > 0)) return;
       this.K = Array.from(info.K); this.size = [info.width, info.height];
@@ -99,7 +99,7 @@ class CameraBase extends Layer {
     }));
   }
 
-  stop() { super.stop(); this.layers.feeds.release(this.feed); this.feed = null; }
+  stop() { super.stop(); this.layers.feeds.release(this.feed, 'preview'); this.feed = null; }
 
   bounds() {
     const pose = this.tf.lookup(this.frameId);

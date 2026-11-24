@@ -254,10 +254,16 @@ export class App extends EventTarget {
     this.backdrop.setPassthrough(this.xr.passthrough);
     this.pointers.bindSession(session, this.renderer.xr.getReferenceSpace());
     this.renderer.xr.getReferenceSpace().addEventListener?.('reset', () => { this.controls.xr.stop(); this.xr.recenter(); });
-    session.addEventListener('visibilitychange', () => { if (session.visibilityState !== 'visible') this.controls.disarm(); });
+    const visibility = () => {
+      this.layers.feeds.setXrVisibility(session.visibilityState === 'visible');
+      if (session.visibilityState !== 'visible') this.controls.disarm();
+    };
+    session.addEventListener('visibilitychange', visibility);
+    visibility();
   }
 
   onSessionEnd() {
+    this.layers.feeds.setXrVisibility(null);
     this.controls.disarm();
     if (this.sceneView.walk.on) this.sceneView.leave();
     this.orbit.enabled = true;
