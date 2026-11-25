@@ -75,6 +75,8 @@ export class XRControls {
     this.mode = 'webxr'; this.padTeleop = new PadTeleop();
     this.calibration = new ArmCalibrationUI(this); this.calibrating = false; this.reference = null;
     this.handEngagement = false; this.engagementSubscription = null;
+    this.startupStage = null; this.cancelStart = null;
+    this.trace = {frames: 0, samples: 0, maxFrameGapMs: 0, lastSampleAt: null, sequence: 0}; this.lastStop = null;
     this.resetHands();
   }
 
@@ -103,11 +105,21 @@ export class XRControls {
     const generation = ++this.generation, mode = [...(c.app.xr.session?.inputSources ?? [])].some(isController) ? 'webxr' : 'hands';
     this.busy = true; this.error = null; this.resetHands(); for (const source of ['pad', 'keys', 'sticks']) c.setInput(source, 0, 0, 0); c.emit();
     const current = () => generation === this.generation && c.armed && c.app.xr.presenting && c.bus.live;
+    let rejectStart;
+    const canceled = new Promise((_, reject) => { rejectStart = reject; });
+    canceled.catch(() => {}); // stop may run before the first asynchronous step.
+    const cancelStart = () => rejectStart(new Error('Headset startup canceled.'));
+    this.cancelStart = cancelStart;
+    const timer = setTimeout(() => rejectStart(new Error(`Timed out while ${this.startupStage}. Press Enable to retry.`)), 15000);
+    const step = (label, operation) => {
+      this.startupStage = label; c.emit();
+      return Promise.race([operation, canceled]);
+    };
     try {
       if (!c.bus.live) throw new Error('The robot connection is offline.');
       if (this.calibration.available && !this.calibration.inputsReady) throw new Error('Waiting for both tracked hands or controllers.');
       if (c.motionSpeeds?.provider && !c.motionSpeeds.ready) {
-        await c.motionSpeeds.refresh();
+        await step('reading robot settings', c.motionSpeeds.refresh());
         if (!current()) return;
       }
       // One channel per hand: "latest" must not replace the other hand's message on the shared topic.
@@ -116,35 +128,35 @@ export class XRControls {
         for (const kind of ['pose', 'joy']) {
           const stream = binding[kind];
           this.targets[side][kind] = {...stream, publisherKey: `${stream.key}#${side}`, live: true,
-            options: {delivery: 'latest', latencyLimit: 100}};
+            options: {delivery: 'latest', latencyLimit: 100, priority: 2}};
         }
       }
       // With the hands: the head they are measured from, and the gamepad they hold.
       for (const extra of ['head', 'pad']) {
         const stream = (mode === 'hands' || extra === 'head') && binding[extra];
-        this.targets[extra] = stream ? {...stream, publisherKey: `${stream.key}#${extra}`, live: true, options: {delivery: 'latest', latencyLimit: 100}} : null;
+        this.targets[extra] = stream ? {...stream, publisherKey: `${stream.key}#${extra}`, live: true, options: {delivery: 'latest', latencyLimit: 100, priority: 2}} : null;
       }
       const extras = [this.targets.head, this.targets.pad].filter(Boolean);
-      await c.claim([binding.pose.key, binding.joy.key, ...extras.map(target => target.key)]);
+      await step('claiming robot controls', c.claim([binding.pose.key, binding.joy.key, ...extras.map(target => target.key)]));
       if (!current()) return;
       if (c.lease.status !== 'held') throw new Error(c.lease.reason || 'Could not acquire the controls.');
       if (this.calibration.available && !calibrating) {
-        await this.calibration.activate();
+        await step('activating arm calibration', this.calibration.activate(current));
         if (!current()) return;
       }
-      await Promise.all([...SIDES.flatMap(side => ['pose', 'joy'].map(kind => this.targets[side][kind])), ...extras]
-        .map(target => c.entry(target).publisher.ready()));
+      await step('opening hand pose channels', Promise.all([...SIDES.flatMap(side => ['pose', 'joy'].map(kind => this.targets[side][kind])), ...extras]
+        .map(target => c.entry(target).publisher.ready())));
       if (!current()) return;
       // The deadmen put both hands and the gamepad at rest if the page/link disappears. The backend also expires input.
       const deadmen = [...SIDES.map(side => [this.targets[side].joy, neutralJoy(side)]), ...(this.targets.pad ? [[this.targets.pad, padMessage(null)]] : [])];
-      await Promise.all(deadmen.map(async ([target, message]) => {
+      await step('setting disconnect stops', Promise.all(deadmen.map(async ([target, message]) => {
         const entry = c.entry(target), bytes = c.encode(target.type, message);
         if (!bytes) throw new Error('Controller message encoding is unavailable.');
         await entry.publisher.setDeadman(bytes); entry.deadman = true;
-      }));
+      })));
       if (!current()) return;
       if (binding.selector) {
-        const answer = await gateway.callRpc(binding.selector.id, 'select_teleop_source', {source: mode});
+        const answer = await step('selecting headset input', gateway.callRpc(binding.selector.id, 'select_teleop_source', {source: mode}));
         if (!current()) return;
         if (!answer.ok || answer.result?.source !== mode) throw new Error(mode === 'hands' ? 'This robot does not take a headset\'s hands. Use tracked controllers.' : answer.error || 'Headset input was not selected.');
       }
@@ -162,7 +174,7 @@ export class XRControls {
             c.emit();
           }
         });
-        await this.engagementSubscription.ready?.();
+        await step('subscribing to arm status', this.engagementSubscription.ready?.());
         if (!current()) return;
       }
       this.enabled = true;
@@ -172,6 +184,8 @@ export class XRControls {
     } catch (error) {
       if (generation === this.generation) { this.stop(); this.error = error.message; c.app.toast(`Headset arms: ${error.message}`, 'danger'); }
     } finally {
+      clearTimeout(timer);
+      if (this.cancelStart === cancelStart) { this.cancelStart = null; this.startupStage = null; }
       if (generation === this.generation) this.busy = false;
       c.emit();
     }
@@ -193,8 +207,10 @@ export class XRControls {
     return !!pointer && (pointer.hit?.type === 'panel' || !!pointer.panelGrab || (pointer.down && pointer.press?.type === 'panel'));
   }
 
-  stop() {
+  stop(reason = 'operator_or_session') {
+    this.cancelStart?.(); this.cancelStart = null; this.startupStage = null;
     const was = this.ownsInputs;
+    if (was) this.lastStop = {reason, at: Date.now(), sequence: this.trace.sequence};
     this.generation++; this.enabled = false; this.busy = false;
     this.calibrating = false; this.calibration.countdown = null;
     this.engagementSubscription?.close(); this.engagementSubscription = null; this.handEngagement = false;
@@ -220,8 +236,11 @@ export class XRControls {
     if (!this.enabled) return;
     const c = this.controls;
     if (!c.armed || !c.bus.live || !frame || !reference || frame.session.visibilityState !== 'visible' || c.lease.status !== 'held') {
-      this.stop(); return;
+      this.stop(!c.armed ? 'not_armed' : !c.bus.live ? 'bus_not_live' : !frame ? 'no_frame'
+        : !reference ? 'no_reference' : frame.session.visibilityState !== 'visible' ? 'visibility' : 'lease_not_held'); return;
     }
+    this.trace.frames++;
+    if (Number.isFinite(this.lastFrame)) this.trace.maxFrameGapMs = Math.max(this.trace.maxFrameGapMs, now - this.lastFrame);
     if (reference !== this.reference) {
       this.reference?.removeEventListener?.('reset', this.onReferenceReset);
       this.reference = reference;
@@ -240,13 +259,19 @@ export class XRControls {
     this.calibration.frame(now);
     let changed = false;
     const captureTime = Date.now();
+    this.trace.samples++; this.trace.lastSampleAt = captureTime;
+    this.trace.sequence = (this.trace.sequence + 1) >>> 0;
+    const publish = (target, message) => {
+      message.header.seq = this.trace.sequence;
+      return c.publish(target, c.encode(target.type, message));
+    };
     if (this.targets.head) {
       const head = headSample(frame.getViewerPose?.(reference), captureTime);
-      if (head) c.publish(this.targets.head, c.encode(this.targets.head.type, head));
+      if (head) publish(this.targets.head, head);
     }
     if (this.mode === 'hands' && this.targets.pad) {
       const pad = this.padTeleop.sample(this.gamepads(), this.sceneInputLocked ? {} : {left: this.onPanel('left'), right: this.onPanel('right')});
-      if (pad || this.calibrating) c.publish(this.targets.pad, c.encode(this.targets.pad.type, padMessage(this.calibrating ? null : pad, captureTime)));
+      if (pad || this.calibrating) publish(this.targets.pad, padMessage(this.calibrating ? null : pad, captureTime));
     }
     for (const side of SIDES) {
       const hands = this.mode === 'hands';
@@ -264,8 +289,8 @@ export class XRControls {
         this.neutral(side); hand.released = false; hand.engaged = false;
       } else if (hands) {
         // No clutch here: the pose is all this page knows of a hand.
-        hand.published = c.publish(this.targets[side].pose, c.encode(this.targets[side].pose.type, sample.pose));
-        c.publish(this.targets[side].joy, c.encode(this.targets[side].joy.type, sample.joy));
+        hand.published = publish(this.targets[side].pose, sample.pose);
+        publish(this.targets[side].joy, sample.joy);
       } else {
         const pointer = c.app.pointers?.sources.get(input);
         const overPanel = !this.sceneInputLocked && pointer?.hit?.type === 'panel';
@@ -278,8 +303,8 @@ export class XRControls {
         hand.engaged = !this.calibrating && hand.released && held;
         if (!hand.released || uiBusy || this.calibrating) sample.joy = neutralJoy(side, captureTime);
         else if (overPanel) { sample.joy.axes[0] = sample.joy.axes[1] = 0; sample.joy.buttons[3] = 0; }
-        hand.published = c.publish(this.targets[side].pose, c.encode(this.targets[side].pose.type, sample.pose));
-        c.publish(this.targets[side].joy, c.encode(this.targets[side].joy.type, sample.joy));
+        hand.published = publish(this.targets[side].pose, sample.pose);
+        publish(this.targets[side].joy, sample.joy);
       }
       changed ||= was !== `${hand.tracked}:${hand.released}:${hand.engaged}`;
     }

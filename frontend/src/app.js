@@ -6,7 +6,6 @@ import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
 import {Theme} from './theme.js';
 import {Stage} from './scene/stage.js';
 import {Backdrop} from './scene/backdrop.js';
-import {Halo} from './scene/halo.js';
 import {Layers} from './scene/layers.js';
 import {Dock} from './ui/dock.js';
 import {HoloPanel} from './ui/holo.js';
@@ -75,7 +74,6 @@ export class App extends EventTarget {
     this.blueprint = new Blueprint(this.bus);
     this.layers = new Layers(this);
     this.diagnostics = new Diagnostics(this);
-    this.halo = new Halo(this);
     this.controls = new Controls(this);
     this.replay = new Replay(this);
     this.replayScene = new ReplayScene(this);
@@ -179,7 +177,6 @@ export class App extends EventTarget {
   }
 
   select(moduleId) { this.selected = moduleId; this.dispatchEvent(new Event('select')); }
-  pulse(moduleId) { this.halo.pulse(moduleId); }
 
   resetCamera() {
     this.camera.position.set(TABLE.x, TABLE.y + 0.98, TABLE.z + 1.42);
@@ -196,7 +193,7 @@ export class App extends EventTarget {
 
   // Desktop keeps a note of what each app shows, which an agent can read to know what the user is looking
   // at, and an agent can ask Desktop to point something out. Both go through here: the note is rewritten
-  // when the selection, the panels or the layers change, and a highlight flashes that module's plate.
+  // when the selection, the panels or the layers change; a highlight selects its module.
   shareView() {
     const name = location.pathname.split('/').filter(Boolean)[1] || 'dim-spatial-desktop';
     let timer = 0;
@@ -223,7 +220,6 @@ export class App extends EventTarget {
       const module = this.blueprint.modules.find(entry => entry.id === event.id || entry.name === event.id || entry.name.toLowerCase() === String(event.id).toLowerCase());
       if (!module) return;
       this.select(module.id); this.toast(`Highlighted: ${module.name}`, 'info');
-      for (let i = 0; i < (event.times || 3); i++) setTimeout(() => this.pulse(module.id), i * 600);
     }));
   }
 
@@ -254,10 +250,16 @@ export class App extends EventTarget {
     this.backdrop.setPassthrough(this.xr.passthrough);
     this.pointers.bindSession(session, this.renderer.xr.getReferenceSpace());
     this.renderer.xr.getReferenceSpace().addEventListener?.('reset', () => { this.controls.xr.stop(); this.xr.recenter(); });
-    session.addEventListener('visibilitychange', () => { if (session.visibilityState !== 'visible') this.controls.disarm(); });
+    const visibility = () => {
+      this.layers.feeds.setXrVisibility(session.visibilityState === 'visible');
+      if (session.visibilityState !== 'visible') this.controls.disarm();
+    };
+    session.addEventListener('visibilitychange', visibility);
+    visibility();
   }
 
   onSessionEnd() {
+    this.layers.feeds.setXrVisibility(null);
     this.controls.disarm();
     if (this.sceneView.walk.on) this.sceneView.leave();
     this.orbit.enabled = true;
@@ -296,7 +298,6 @@ export class App extends EventTarget {
     this.replay.tick(now, dt);
     // A scene or a replayed episode has the table: the live layers wait until it is closed.
     if (this.scenes.active) this.sceneView.update(now, dt); else if (this.replay.active) this.replayScene.update(now); else this.layers.update(dt, now);
-    this.halo.update(dt, now);
     this.dock.update(now, dt);
     this.backdrop.update(time / 1000, this.renderer);
     if (xrFrame) this.renderer.render(this.scene, this.camera); else this.renderFlat();

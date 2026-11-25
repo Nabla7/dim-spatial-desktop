@@ -52,8 +52,31 @@ test('two standard halves form the backend pad without letting one half stand in
   const sample = padSample([right, left]);
   assert.deepEqual(sample.axes, [0.5, -0.5, 0.25, -1]);
   assert.deepEqual(sample.buttons.flatMap((value, i) => value ? [i] : []), [3, 6, 7, 8, 9, 12]);
-  assert.deepEqual(padSample([left, right].map(pad => ({...pad, id: pad.id + ' Gamepad', mapping: ''}))), sample);
+  const cocoa = padSample([left, right].map(pad => ({...pad, id: pad.id + ' Gamepad', mapping: ''})));
+  assert.deepEqual(cocoa.axes, sample.axes);
+  assert.deepEqual(cocoa.buttons.flatMap((value, i) => value ? [i] : []), [2, 6, 7, 8, 9, 12]);
   assert.equal(padSample([left]), null);
+});
+
+test('Cocoa Joy-Con printed X becomes standard north and Y stays west, paired or separate', () => {
+  for (const [raw, standard] of [[0, 1], [1, 0], [2, 3], [3, 2]]) {
+    const paired = {...pair(undefined, {[raw]: true}), id: 'Joy-Con (L/R) Extended Gamepad'};
+    const left = half('Joy-Con (L) Gamepad'), right = half('Joy-Con (R) Gamepad', [0, 0], {[raw]: true});
+    for (const pads of [[paired], [left, right], [right, left]]) {
+      assert.deepEqual(padSample(pads).buttons.flatMap((value, i) => value ? [i] : []), [standard]);
+    }
+  }
+});
+
+test('Cocoa face-button UI clicks are consumed after normalization and cannot leak into teleop', () => {
+  const released = {...pair(), id: 'Joy-Con (L/R) Extended Gamepad'};
+  const pressed = {...pair(undefined, {0: true}), id: released.id};
+  const routing = new PadTeleop(); routing.reset([released]);
+  assert.equal(heldPads([pressed]).right.select, true);
+  assert.equal(routing.sample([pressed], {right: true}).buttons[1], 0);
+  assert.equal(routing.sample([pressed]).buttons[1], 0);
+  routing.sample([released]);
+  assert.equal(routing.sample([pressed]).buttons[1], 1);
 });
 
 test('UI clicks and buttons held on entry cannot become robot commands until released', () => {

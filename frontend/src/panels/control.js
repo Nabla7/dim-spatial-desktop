@@ -18,7 +18,7 @@ export function openControl(app) {
 
   async function run(action) {
     const key = `${action.module.id}.${action.rpc.name}`;
-    state.results[key] = {pending: true}; panel.invalidate(); app.pulse(action.module.id);
+    state.results[key] = {pending: true}; panel.invalidate();
     try {
       const answer = await gateway.callRpc(action.module.id, action.rpc.name, action.kwargs);
       state.results[key] = {ok: !!answer.ok, at: performance.now()};
@@ -56,7 +56,7 @@ export function openControl(app) {
     if (controls.drives.length > 1) {
       const index = controls.drives.indexOf(target), row = area.cutTop(48, 8);
       ui.text('Sends to', row.x, row.cy, {size: SIZE.sm, color: ui.tone('muted')});
-      ui.button(new Rect(row.x + 90, row.y, row.w - 90, row.h), short(target), () => { controls.driveKey = controls.drives[(index + 1) % controls.drives.length].key; }, {id: 'drive:target', size: SIZE.sm, tone: 'muted', sub: `${index + 1} of ${controls.drives.length} · ${target.type.split('.')[1]} → ${target.readers.map(words).join(', ')}`});
+      ui.button(new Rect(row.x + 90, row.y, row.w - 90, row.h), short(target), () => { controls.selectDrive(controls.drives[(index + 1) % controls.drives.length].key); }, {id: 'drive:target', size: SIZE.sm, tone: 'muted', sub: `${index + 1} of ${controls.drives.length} · ${target.type.split('.')[1]} → ${target.readers.map(words).join(', ')}`});
     } else {
       ui.text(`${target.topic}  →  ${target.readers.map(words).join(', ')}`, area.x, area.cutTop(26, 6).cy, {size: SIZE.xs, family: 'mono', color: ui.tone('muted'), max: area.w});
     }
@@ -90,8 +90,14 @@ export function openControl(app) {
       {id: 'xr:calibration', tone: 'primary', size: SIZE.sm, sub: 'Shoulders · neutral · reach · saved profiles'});
     ui.button(area.cutTop(48, 12), xr.busy ? 'CONNECTING…' : xr.enabled ? 'STOP HEADSET ARMS' : 'ENABLE HEADSET ARMS',
       () => owns ? xr.stop() : xr.start(), {id: 'xr:enable', enabled: owns || (controls.armed && app.xr.presenting), tone: owns ? 'warn' : 'primary', on: owns, size: SIZE.sm});
+    const home = controls.armHome;
+    if (home.provider) {
+      ui.button(area.cutTop(48, 8), home.active ? 'CANCEL RETURN HOME' : 'RETURN ARMS HOME',
+        () => home.active ? home.cancel() : home.start(), {id: 'arms:home', enabled: home.active || (controls.armed && !home.busy), tone: home.active ? 'warn' : 'primary', size: SIZE.sm,
+          sub: home.error || (home.active ? 'Moving · tracking paused' : home.status?.state === 'reached' ? 'Home reached · enable headset arms to resume' : 'Pauses tracking · keep arm paths clear · torso stays put')});
+    }
     const note = !controls.armed ? 'Arm the controls first.' : !app.xr.presenting ? 'Enter VR or MIXED to use tracked controllers.' :
-      xr.error || (!xr.enabled ? 'Enable to select headset input for the robot.' : xr.mode === 'hands' ? (xr.targets.pad && app.pointers.padInfo.length ? 'Disable arm tracking with the enable button before using panels. While tracking, all buttons and sticks belong to the robot.' : 'Your hands are selected. The enable button you hold starts and stops the arms.') : 'Headset input selected. Release each grip before engaging.');
+      xr.error || (xr.busy ? `Connecting: ${xr.startupStage || 'starting'}…` : null) || (!xr.enabled ? 'Enable to select headset input for the robot.' : xr.mode === 'hands' ? (xr.targets.pad && app.pointers.padInfo.length ? 'Disable arm tracking with the enable button before using panels. While tracking, all buttons and sticks belong to the robot.' : 'Your hands are selected. The enable button you hold starts and stops the arms.') : 'Headset input selected. Release each grip before engaging.');
     const used = ui.wrap(note, new Rect(area.x, area.y, area.w, 0), {size: SIZE.sm, color: ui.tone(xr.error ? 'danger' : 'muted'), maxLines: 3});
     area.cutTop(used + 16, 0);
     for (const side of ['left', 'right']) {
@@ -236,7 +242,7 @@ export function openControl(app) {
       if (!armed) state.targets = {};
       if (!app.blueprint.running) { ui.empty(content, 'No blueprint is running.', 'Its controls appear here when one is.'); return; }
       const top = content.cutTop(52, 12);
-      ui.button(top.cutRight(150, 10), 'STOP', () => controls.stop(), {id: 'stop', icon: 'stop', tone: 'danger', on: true, enabled: controls.drives.length > 0 || controls.xr.ownsInputs});
+      ui.button(top.cutRight(150, 10), 'STOP', () => controls.stop(), {id: 'stop', icon: 'stop', tone: 'danger', on: true, enabled: controls.drives.length > 0 || controls.xr.ownsInputs || controls.armHome.active});
       ui.button(top, armed ? 'ARMED · press to make safe' : 'ARM THE CONTROLS', () => controls.arm(!armed), {id: 'arm', tone: armed ? 'warn' : 'primary', on: armed, icon: armed ? 'warn' : null, enabled: controls.any});
       if (!controls.any) { ui.empty(content, 'This blueprint reads no command streams and has no simple RPCs.'); return; }
       if (controls.statuses.length) drawStatus(ui, content);

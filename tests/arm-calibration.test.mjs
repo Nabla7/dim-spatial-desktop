@@ -98,3 +98,15 @@ test('status polling preserves capture rejection messages and reviews the select
   assert.equal(c.error, 'left: Hold still');
   assert.deepEqual(calls.at(-1).args, {profile_id: 'saved'});
 });
+
+
+test('canceling startup during calibration refresh cannot later activate the robot', async t => {
+  const {c, status} = setup(t); let finish; let current = true;
+  status.profiles = [{id: 'saved', schema_version: 2, input_kind: 'controllers', device: 'generic-trigger-squeeze'}];
+  status.profile_id = 'saved';
+  gateway.callRpc.mock.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  const activating = c.activate(() => current);
+  current = false; finish({ok: true, result: status});
+  await assert.rejects(activating, /startup canceled/);
+  assert.deepEqual(gateway.callRpc.mock.calls.map(call => call.arguments[1]), ['get_arm_calibration']);
+});

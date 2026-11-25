@@ -1,5 +1,4 @@
 // The running blueprint's module instances, as a list: the dependable way in to each one
-// (the ring of modules around the table is the same set, drawn in space).
 import {SIZE} from '../ui/holo.js';
 import {Rect} from '../ui/rect.js';
 import {words} from '../util.js';

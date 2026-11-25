@@ -8,6 +8,8 @@
 import {gateway} from './gateway.js';
 import {MotionSpeeds} from './motion-speeds.js';
 import {XRControls} from './xr-controls.js';
+import {ArmHome} from './arm-home.js';
+import {rankDriveTargets} from './drive-routing.js';
 
 const DRIVE = ['geometry_msgs.Twist', 'geometry_msgs.TwistStamped'];
 const NUMBER = ['std_msgs.Float32', 'std_msgs.Int32', 'std_msgs.Int8', 'std_msgs.UInt32'];
@@ -54,11 +56,17 @@ export class Controls extends EventTarget {
     this.heldNumbers = new Map(); this.zeroing = [];
     this.held = new Set();
     this.xr = new XRControls(this);
+    this.armHome = new ArmHome(this);
     app.blueprint.addEventListener('modules', () => this.discover());
     addEventListener('keydown', event => this.key(event, true));
     addEventListener('keyup', event => this.key(event, false));
     addEventListener('blur', () => { this.held.clear(); this.keys(); });
     addEventListener('pagehide', () => this.disarm());
+    document.addEventListener('visibilitychange', () => {
+      // A background tab must give up its held pad/sticks and lease. XR has its own session
+      // visibility handler: its canvas may be presented while the desktop document is hidden.
+      if (document.visibilityState === 'hidden' && !this.app.xr?.presenting) this.disarm();
+    });
     this.discover();
   }
 
@@ -71,6 +79,7 @@ export class Controls extends EventTarget {
     const blueprint = this.app.blueprint, found = new Map();
     this.motionSpeeds.discover(blueprint.modules);
     this.xr.discover(blueprint.modules);
+    this.armHome.discover(blueprint.modules);
     for (const module of blueprint.modules) for (const stream of module.streams) {
       if (!stream.key || !stream.type) continue;
       if (!found.has(stream.key)) found.set(stream.key, {key: stream.key, topic: stream.topic, type: stream.type, readers: [], writers: []});
@@ -80,15 +89,16 @@ export class Controls extends EventTarget {
     const commands = [...found.values()].filter(target => target.readers.length).sort((a, b) => a.writers.length - b.writers.length || a.topic.localeCompare(b.topic));
     // A target keeps its identity from one look at the blueprint to the next: it carries what is being sent to it.
     const keep = target => { const known = this.known.get(target.key); if (known) return Object.assign(known, target); this.known.set(target.key, target); return target; };
-    this.drives = commands.filter(target => DRIVE.includes(target.type)).map(keep);
+    this.drives = rankDriveTargets(commands.filter(target => DRIVE.includes(target.type)), blueprint.modules).map(keep);
     this.numbers = commands.filter(target => NUMBER.includes(target.type) && !NOT_A_QUANTITY.test(target.topic)).map(keep);
     this.switches = commands.filter(target => target.type === 'std_msgs.Bool').map(keep);
     this.goals = commands.filter(target => GOAL.includes(target.type) && FLOOR_GOAL.test(target.topic)).map(keep);
     this.joints = commands.filter(target => target.type === 'sensor_msgs.JointState' && !target.writers.length && !STATE_TOPIC.test(target.topic)).map(target => keep({...target, kind: 'stream', label: target.topic.replace(/^\//, '')}));
     this.states = [...found.values()].filter(target => target.type === 'sensor_msgs.JointState' && target.writers.length).sort((a, b) => Number(/joint_state$/.test(b.topic)) - Number(/joint_state$/.test(a.topic)));
-    if (!this.drives.some(target => target.key === this.driveKey)) this.driveKey = (this.drives.find(target => /cmd_vel$/.test(target.topic)) || this.drives[0])?.key ?? null;
+    if (!this.drives.some(target => target.key === this.driveKey)) this.driveKey = this.drives[0]?.key ?? null;
     this.actions = []; this.statuses = [];
     for (const module of blueprint.modules) for (const rpc of module.rpcs) {
+      if (module === this.armHome.provider && ['home_arms', 'cancel_arm_home'].includes(rpc.name)) continue;
       const pinned = this.pins[`${module.name}.${rpc.name}`], required = rpc.params.filter(param => param.required);
       // An action is an RPC that needs nothing typed: no required parameters, and not a getter. A pin overrides both.
       if (pinned || (!READS.test(rpc.name) && !PLUMBING.test(rpc.name) && !required.length)) this.actions.push({module, rpc, pinned: !!pinned, kwargs: pinned?.kwargs || {}});
@@ -129,6 +139,7 @@ export class Controls extends EventTarget {
   disarm() {
     const was = this.armed;
     this.xr.stop();
+    void this.armHome.cancel();
     this.armed = false; this.aiming = null; this.held.clear();
     for (const input of Object.values(this.inputs)) input.fill(0);
     if (this.moving) { this.send([0, 0, 0]); this.moving = false; }
@@ -145,6 +156,7 @@ export class Controls extends EventTarget {
   // Stop everything that moves by velocity, armed or not.
   stop() {
     this.xr.stop();
+    void this.armHome.cancel();
     for (const input of Object.values(this.inputs)) input.fill(0);
     this.held.clear(); this.heldNumbers.clear();
     // A stop is worth taking the controls for, from whoever has them. Unarmed, they are given back right after.
@@ -175,8 +187,11 @@ export class Controls extends EventTarget {
 
   take() {
     const lease = this.lease, client = this.bus.client;
+    const request = lease.request = (lease.request || 0) + 1;
     lease.status = 'taking'; lease.again = false;
     lease.taking = client.lease({group: LEASE_GROUP, publish: lease.keys, subscribe: [], allowTakeover: true, timeoutMs: LEASE_TIMEOUT_MS}).then(handle => {
+      // Hiding/disarming can win the race with the grant. Do not keep ownership for that old press.
+      if (lease.request !== request) return handle.release().catch(() => {});
       lease.handle = handle; lease.status = 'held'; lease.reason = null;
       handle.onLost(reason => {
         if (lease.handle !== handle || reason === 'renewed' || reason === 'released') return;
@@ -185,15 +200,16 @@ export class Controls extends EventTarget {
         if (taken && this.armed) this.app.toast('Another app took over the robot\'s controls. Your next press takes them back.', 'warn', 6);
         this.emit();
       });
-    }).catch(error => { lease.status = 'refused'; lease.reason = error.message; })
-      .finally(() => { lease.taking = null; this.emit(); if (lease.again && this.armed) this.take(); });
+    }).catch(error => { if (lease.request === request) { lease.status = 'refused'; lease.reason = error.message; } })
+      .finally(() => { if (lease.request !== request) return; lease.taking = null; this.emit(); if (lease.again && this.armed) this.take(); });
     this.emit();
     return lease.taking;
   }
 
   releaseLease() {
     const lease = this.lease, handle = lease.handle;
-    lease.handle = null; lease.status = 'off'; lease.reason = null; lease.keys = []; lease.again = false;
+    lease.request = (lease.request || 0) + 1;
+    lease.handle = null; lease.status = 'off'; lease.reason = null; lease.keys = []; lease.again = false; lease.taking = null;
     handle?.release?.().catch(() => {});
   }
 
@@ -219,13 +235,23 @@ export class Controls extends EventTarget {
 
   publish(target, bytes) {
     if (!bytes || !this.bus.live) return false;
-    const entry = this.entry(target), put = () => { try { entry.publisher.put(bytes); } catch (error) { console.warn(`publish ${target.topic}:`, error.message); } };
+    const entry = this.entry(target), now = performance.now();
+    const metrics = entry.metrics ??= {attempts: 0, offered: 0, skipped: {}, maxAttemptGapMs: 0, lastAttemptAt: null};
+    if (metrics.lastAttemptAt !== null) metrics.maxAttemptGapMs = Math.max(metrics.maxAttemptGapMs, now - metrics.lastAttemptAt);
+    metrics.lastAttemptAt = now; metrics.attempts++;
+    const skip = reason => { metrics.skipped[reason] = (metrics.skipped[reason] || 0) + 1; metrics.lastSkip = {reason, at: Date.now()}; return false; };
+    const put = () => {
+      try { entry.publisher.put(bytes); metrics.offered++; return true; }
+      catch (error) { console.warn(`publish ${target.topic}:`, error.message); return skip('put_error'); }
+    };
     const taking = this.claim(target.key);
     // Live tracking never waits in a promise and replays old poses after a lease/reconnect.
     if (target.live) {
-      if (!this.armed || taking || this.lease.status !== 'held' || entry.publisher.state !== 'open' || entry.publisher.blocked ||
-          entry.publisher.channel?.readyState !== 'open' || entry.publisher.channel.bufferedAmount > 16384) return false;
-      put(); return true;
+      const reason = !this.armed ? 'not_armed' : taking ? 'taking_lease' : this.lease.status !== 'held' ? 'lease_not_held'
+        : entry.publisher.state !== 'open' ? 'publisher_not_open' : entry.publisher.blocked ? 'publisher_blocked'
+        : entry.publisher.channel?.readyState !== 'open' ? 'channel_not_open'
+        : entry.publisher.channel.bufferedAmount > 16384 ? 'channel_backlog' : null;
+      return reason ? skip(reason) : put();
     }
     // A stream of velocity commands goes out at once (the next one is 66 ms away); a single command waits for the lease.
     if (taking && !DRIVE.includes(target.type)) taking.then(put); else put();
@@ -241,6 +267,14 @@ export class Controls extends EventTarget {
 
   // -- driving --------------------------------------------------------------------------------------
   get drive() { return this.drives.find(target => target.key === this.driveKey) || null; }
+
+  selectDrive(key) {
+    if (key === this.driveKey || !this.drives.some(target => target.key === key)) return;
+    // Stop the old route before changing it; a held input must not transfer to another actuator.
+    this.disarm();
+    this.driveKey = key; this.command = [0, 0, 0]; this.emit();
+    this.app.toast('Drive target changed. Arm controls to drive.', 'info');
+  }
 
   // Pad, keys and sticks each hold an input (forward, left, turn-left; each -1..1). The largest wins per axis.
   setInput(source, forward, left, turn) {

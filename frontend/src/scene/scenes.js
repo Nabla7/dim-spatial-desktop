@@ -53,8 +53,7 @@ export class SceneView extends EventTarget {
   // -- a scene comes and goes ---------------------------------------------------------------------------
   opened() {
     const {app, stage} = this;
-    this.before = {ceiling: stage.ceiling, halo: app.halo.enabled};
-    app.halo.enabled = false;
+    this.before = {ceiling: stage.ceiling};
     app.layers.root.visible = false; app.layers.follow = null; app.layers.autoFollow = false;
     this.root.visible = true; this.framed = false;
     app.pointers.onWorldClick = pointer => this.click(pointer);
@@ -71,7 +70,7 @@ export class SceneView extends EventTarget {
     this.models.clear();
     for (const name of Object.keys(this.layers)) this.empty(name);
     this.solidKey = null;
-    if (this.before) { stage.ceiling = this.before.ceiling; app.halo.enabled = this.before.halo; }
+    if (this.before) stage.ceiling = this.before.ceiling;
     app.layers.root.visible = !app.replay.active;
   }
 

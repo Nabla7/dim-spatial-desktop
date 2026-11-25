@@ -20,7 +20,12 @@ export function padSide(id) {
 
 // WebKit uses standard button/axis slots for its Cocoa Gamepad profiles even when a non-extended
 // profile has an empty mapping string. Other unmapped devices need their own declared layout.
-const standardLayout = pad => pad.mapping === 'standard' || /Joy[- ]?Con.*\bGamepad$/i.test(pad.id);
+const cocoaJoyCon = pad => /Joy[- ]?Con.*\bGamepad$/i.test(pad.id);
+const standardLayout = pad => pad.mapping === 'standard' || cocoaJoyCon(pad);
+// WebKit's Cocoa profile reports A/B/X/Y in slots 0/1/2/3 (GameControllerGamepad.mm).
+// Nintendo's printed letters put those at east/south/north/west. Normalize this known
+// profile to the positional standard contract; other browsers' standard pads already have it.
+const standardButton = (pad, index) => down(pad.buttons[cocoaJoyCon(pad) && index < 4 ? [1, 0, 3, 2][index] : index]);
 // Which hands a pad is read for: 'both', 'left', 'right' or null (a layout this file does not know).
 const padHands = pad => pad.axes.length >= 2 ? padSide(pad.id) ?? (pad.axes.length >= 4 && standardLayout(pad) ? 'both' : null) : null;
 
@@ -59,10 +64,11 @@ export function describePads(gamepads) {
 // for the backend, so a press on a panel is not also a command.
 export function padSample(gamepads, mine = {}) {
   const pads = present(gamepads), pad = pads.find(pad => standardLayout(pad) && padHands(pad) === 'both' && pad.buttons.length >= 16);
-  let axes, buttons;
+  let axes, buttons, selectButton;
   if (pad) {
     axes = [0, 1, 2, 3].map(i => axis(pad.axes[i]));
-    buttons = [...pad.buttons].map(button => down(button) ? 1 : 0);
+    buttons = [...pad.buttons].map((_, i) => +standardButton(pad, i));
+    selectButton = cocoaJoyCon(pad) ? 1 : 0;
   } else {
     const left = pads.find(pad => standardLayout(pad) && padHands(pad) === 'left');
     const right = pads.find(pad => standardLayout(pad) && padHands(pad) === 'right');
@@ -70,13 +76,14 @@ export function padSample(gamepads, mine = {}) {
     if (!left || !right) return null;
     axes = [...halfStick(left), ...halfStick(right)]; buttons = Array(18).fill(0);
     for (const i of [4, 6, 8, 10, 12, 13, 14, 15, 17]) buttons[i] = down(left.buttons[i]) ? 1 : 0;
-    for (const i of [0, 1, 2, 3, 5, 7, 9, 11, 16]) buttons[i] = down(right.buttons[i]) ? 1 : 0;
+    for (const i of [0, 1, 2, 3, 5, 7, 9, 11, 16]) buttons[i] = +standardButton(right, i);
+    selectButton = cocoaJoyCon(right) ? 1 : 0;
     buttons[4] = +halfShoulder(left); buttons[5] = +halfShoulder(right);
     buttons[6] = +halfTrigger(left); buttons[7] = +halfTrigger(right);
   }
   axes = axes.map(value => Math.max(-1, Math.min(1, value)));
   if (mine.left) { axes[0] = axes[1] = 0; buttons[6] = 0; }
-  if (mine.right) { axes[2] = axes[3] = 0; buttons[7] = buttons[0] = 0; }
+  if (mine.right) { axes[2] = axes[3] = 0; buttons[7] = buttons[selectButton] = 0; }
   return {layout: 'standard', axes, buttons};
 }
 

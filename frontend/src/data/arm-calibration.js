@@ -86,10 +86,11 @@ export class ArmCalibrationUI {
       if (!this.xr.enabled) throw new Error(this.xr.error || 'Could not start tracked input');
     });
   }
-  async activate() {
+  async activate(current = () => true) {
     this.error = null;
     if (!this.inputsReady) throw new Error('Waiting for both tracked hands or controllers.');
     await this.refresh();
+    if (!current()) throw new Error('Headset startup canceled.');
     if (!this.compatible.some(p => p.id === this.selected)) throw new Error('Choose a calibration for this input method, or open CALIBRATION to create one.');
     this.session = crypto.randomUUID();
     await this.call('activate_arm_calibration', {profile_id: this.selected, ...this.identity, session: this.session});

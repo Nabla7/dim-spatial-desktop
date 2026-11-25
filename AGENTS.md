@@ -68,7 +68,7 @@ server/scenes/worker.py     describes a stage, answers rays with the compiled mo
 frontend/index.html         theme link, import map (vendor/three), boot note
 frontend/src/update.js      reloads an open page when the server serves a newer build
 frontend/src/main.js        entry; ?emulate installs the WebXR emulator
-frontend/src/app.js         App: renderer, stage, dock, pointers, bus, blueprint, layers, ring, controls, XR
+frontend/src/app.js         App: renderer, stage, dock, pointers, bus, blueprint, layers, controls, XR
   theme.js                  Desktop's tokens as canvas colors and THREE.Colors
   util.js                   formatters; RPC parameters: kind from the annotation, typed text -> JSON, docstrings
   data/gateway.js           every HTTP call (dimos gateway, Desktop, Launcher, this app's server)
@@ -95,7 +95,6 @@ frontend/src/app.js         App: renderer, stage, dock, pointers, bus, blueprint
   scene/tf.js, feeds.js     transform tree; camera video textures shared per topic
   scene/scenes.js           a scene on the table: shapes, layers over them, pins, recorded views, walking
   scene/viz/*.js            one file per kind of drawing
-  scene/halo.js             the ring of module plates and topic arcs
   scene/hologram.js         the hologram material the robot model and a replayed world share
   scene/replay.js           a replayed episode's world on the table: bodies, ghost, paths, camera frustums
   panels/*.js               one file per panel; each exports open<Name>(app)

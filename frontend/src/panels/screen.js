@@ -5,6 +5,7 @@
 // uses), not a copy drawn into the panel's canvas: it shows every frame the stream has, at any size.
 import * as THREE from 'three';
 import {UNITS_PER_METRE} from '../ui/holo.js';
+import {VIDEO_PRESETS} from '../scene/video-policy.js';
 
 const WIDTHS = {s: 0.3, m: 0.44, l: 0.62, xl: 0.86}, SIZES = Object.keys(WIDTHS);
 // A panel's title bar and its edge, in metres (the content rectangle of ui/holo.js's chrome).
@@ -53,7 +54,16 @@ function build(app, topic, state, again) {
   const panel = app.panel({
     id, title: topic.topic.replace(/^\//, ''), glyph: 'camera', width, height, kept: true,
     onClose: () => { forget(app, topic.key); app.dock.close(id); },
-    tools: [{id: 'size', label: state.size.toUpperCase(), hint: 'SIZE OF THE SCREEN', onClick: () => { state.size = SIZES[(SIZES.indexOf(state.size) + 1) % SIZES.length]; resize(); }}],
+    tools: [
+      {id: 'quality', label: VIDEO_PRESETS[feed.quality].label, hint: 'CAMERA QUALITY', onClick: () => {
+        const qualities = Object.keys(VIDEO_PRESETS), quality = qualities[(qualities.indexOf(feed.quality) + 1) % qualities.length];
+        app.layers.feeds.setQuality(feed, quality); app.toast(VIDEO_PRESETS[quality].hint);
+      }},
+      {id: 'main', label: 'MAIN', hint: 'GIVE THIS CAMERA MORE BANDWIDTH', onClick: () => {
+        app.layers.feeds.setMain(feed.key); app.toast('Open camera views share bandwidth; previews yield first');
+      }},
+      {id: 'size', label: state.size.toUpperCase(), hint: 'SIZE OF THE SCREEN', onClick: () => { state.size = SIZES[(SIZES.indexOf(state.size) + 1) % SIZES.length]; resize(); }},
+    ],
     draw(ui, content) {
       ui.ctx.fillStyle = ui.tone('bg', 0.9); ui.ctx.fillRect(content.x, content.y, content.w, content.h);
       if (!playing) ui.empty(content, feed.error || 'Waiting for the first frame…');
@@ -63,6 +73,10 @@ function build(app, topic, state, again) {
   picture.position.set(0, (EDGE - TITLE) / 2, 0.0008); picture.renderOrder = 31; picture.visible = false;
   panel.group.add(picture);
   panel.onFrame = now => {
+    const qualityLabel = VIDEO_PRESETS[feed.quality].label, mainLabel = app.layers.feeds.main === feed.key ? 'MAIN •' : 'MAIN';
+    if (panel.tools[0].label !== qualityLabel || panel.tools[1].label !== mainLabel) {
+      panel.tools[0].label = qualityLabel; panel.tools[1].label = mainLabel; panel.invalidate();
+    }
     const video = feed.video, ready = video.readyState >= 2 && video.videoWidth > 0, stalled = ready && now - feed.lastAt > 1500;
     // The picture comes when the panel has finished opening and goes when it starts to close.
     playing = ready; picture.visible = ready && !panel.closing && now - panel.opened > 420;

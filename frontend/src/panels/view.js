@@ -29,7 +29,8 @@ export function openView(app) {
         {id: 'ceiling', step: 0.1, format: value => (value >= 11.9 ? 'off' : `${value.toFixed(1)} m`)});
       ui.heading(content.cutTop(26, 8), 'Table');
       ui.toggle(content.cutTop(40, 4), 'Cut the world at the table\'s edge', stage.clipping, on => stage.setClipping(on), {id: 'clip', enabled: !stage.lifeSize});
-      ui.toggle(content.cutTop(40, 4), 'Show the module ring', app.halo.enabled, on => { app.halo.enabled = on; }, {id: 'halo'});
+      ui.toggle(content.cutTop(40, 4), 'Follow robot · keep centered', !!app.layers.follow, on => app.layers.setFollow(on),
+        {id: 'follow', enabled: !!app.layers.robotRoot() && !app.replay.active && !app.scenes.active});
       const actions = content.cutTop(44, 0).cols(2, 8);
       ui.button(actions[0], 'LEVEL & CENTRE', () => { stage.target.yaw = 0; app.layers.frameAll(); }, {id: 'level', size: SIZE.sm});
       if (app.xr.presenting) ui.button(actions[1], 'BRING TO ME', () => app.xr.recenter(), {id: 'recenter', size: SIZE.sm, icon: 'home'});
@@ -37,6 +38,7 @@ export function openView(app) {
     },
   });
   const timer = setInterval(() => panel.invalidate(), 500);
+  app.layers.addEventListener('change', () => panel.invalidate(), {signal: panel.signal});
   panel.onDispose = () => clearInterval(timer);
   return app.dock.open(panel, 'right');
 }

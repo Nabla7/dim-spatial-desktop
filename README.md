@@ -44,6 +44,10 @@ Desktop is told what the app shows, so an agent that asks Desktop can know what 
 
 ## Panels that stay
 
+**View → Follow robot · keep centered** keeps the live robot's base at the center of the table
+without changing the zoom, floor height or viewing angle. Moving the world manually turns following
+off; switch it on again to recenter. The same toggle is also available in **Layers**.
+
 On a screen, each side holds one tool: the next panel you open there takes its place. Three things stay:
 
 - **A panel you keep.** Every panel has a pin in its title bar. A kept panel is not given up for another:
@@ -124,6 +128,10 @@ when Safari reports four axis slots for each. Hand tracking supplies the pointin
 after enabling, then use the backend's enable control. Two separate standard-layout halves are
 combined into the same gamepad input as a paired controller. A button used on a panel cannot also
 command the robot until released. **STOP** or **SAFE** restores desktop interaction.
+
+Safari's Cocoa Joy-Con profile is normalized to that positional layout, so the printed **X** and
+**Y** buttons retain their intended backend actions. Generic standard gamepads keep their existing
+mapping. In the JoyLo backend, **X** toggles tracking on and off; release between presses.
 
 After an update, exit the immersive session, reload the page and enter it again; updates do not
 reload an active immersive session.

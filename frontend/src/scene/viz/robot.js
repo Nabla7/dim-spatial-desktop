@@ -351,10 +351,23 @@ export class RobotLayer extends Layer {
     }
   }
 
+  // Model files need not list their base first. Follow the highest modeled link in the TF tree,
+  // rather than an arm/camera merely because its mesh was serialized first.
+  rootFrame() {
+    const names = new Set(this.model?.links.map(({link}) => link) ?? []);
+    for (const link of names) {
+      if (!this.tf.knows(link)) continue;
+      let parent = this.tf.frames?.get(link)?.parent, depth = 0;
+      while (parent && !names.has(parent) && depth++ < 256) parent = this.tf.frames?.get(parent)?.parent;
+      if (!parent) return link;
+    }
+    return null;
+  }
+
   // Where the robot stands: its root link's place on the ground plane, at the height of its lowest link
   // (a wheel, a foot), since a root link is often a chassis or a pelvis well above the floor.
   position() {
-    const root = this.model?.links[0]?.link, pose = root && this.tf.knows(root) ? this.tf.lookup(root) : null;
+    const root = this.rootFrame(), pose = root ? this.tf.lookup(root) : null;
     if (!pose) return null;
     const at = new THREE.Vector3().setFromMatrixPosition(pose), point = new THREE.Vector3();
     for (const {link} of this.model.links) { const link_pose = this.tf.knows(link) ? this.tf.lookup(link) : null; if (link_pose) at.z = Math.min(at.z, point.setFromMatrixPosition(link_pose).z); }

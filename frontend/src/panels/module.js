@@ -69,7 +69,6 @@ export function openModule(app, moduleId) {
     try { kwargs = kwargsOf(rpc); } catch (error) { state.results[rpc.name] = {ok: false, text: error.message, at: Date.now()}; panel.invalidate(); return; }
     const started = performance.now();
     state.results[rpc.name] = {pending: true}; panel.busy = true; panel.invalidate();
-    app.pulse(moduleId);
     try {
       const answer = await gateway.callRpc(moduleId, rpc.name, kwargs);
       // A result with no JSON form arrives as its Python repr: say what it is instead of printing an address.

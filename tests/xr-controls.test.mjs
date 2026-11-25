@@ -329,3 +329,48 @@ test('engaging either tracked controller reserves both hands and their sticks fr
   grip(s.left, 0); s.tick(); assert.equal(s.xr.sceneInputLocked, true);
   grip(s.right, 0); s.tick(); assert.equal(s.xr.sceneInputLocked, false);
 });
+
+
+for (const stage of ['lease', 'publisher', 'source']) {
+  test(`a stalled ${stage} times out without enabling after its late reply`, async t => {
+    const s = setup(t); let finish;
+    const pending = new Promise(resolve => { finish = resolve; });
+    const label = {lease: 'claiming robot controls', publisher: 'opening hand pose channels', source: 'selecting headset input'}[stage];
+    if (stage === 'lease') t.mock.method(s.c, 'claim', () => pending);
+    if (stage === 'publisher') t.mock.method(s.c, 'entry', () => ({publisher: {ready: () => pending}}));
+    if (stage === 'source') gateway.callRpc.mock.mockImplementation(() => pending);
+    t.mock.timers.enable({apis: ['setTimeout']});
+
+    const starting = s.start();
+    for (let i = 0; i < 20 && s.xr.startupStage !== label; i++) await Promise.resolve();
+    assert.equal(s.xr.startupStage, label);
+    t.mock.timers.tick(15000); await starting;
+
+    assert.equal(s.xr.busy, false); assert.equal(s.xr.enabled, false);
+    assert.match(s.xr.error, new RegExp(`Timed out while ${label}`));
+    assert.equal(s.xr.startupStage, null);
+    finish({ok: true, result: {source: 'webxr'}}); await Promise.resolve(); s.tick();
+    assert.equal(s.xr.enabled, false);
+    assert(s.sent.every(m => m.type !== 'geometry_msgs.PoseStamped'));
+  });
+}
+
+test('cancel immediately settles startup even if its channel never answers', async t => {
+  const s = setup(t);
+  t.mock.method(s.c, 'claim', () => new Promise(() => {}));
+  const starting = s.start(); s.xr.stop(); await starting;
+  assert.equal(s.xr.enabled, false); assert.equal(s.xr.busy, false);
+  assert.equal(s.xr.error, null);
+});
+
+test('tracked frames carry increasing identities and latency-sensitive channel options', async t => {
+  const s = setup(t); await s.start(); s.tick();
+  const first = s.sent.filter(m => m.type === 'geometry_msgs.PoseStamped').at(-1);
+  assert.equal(first.target.options.latencyLimit, 100);
+  assert.equal(first.target.options.priority, 2);
+  assert.equal(first.value.header.seq, 1);
+  s.tick();
+  assert.equal(s.sent.filter(m => m.type === 'geometry_msgs.PoseStamped').at(-1).value.header.seq, 2);
+  s.frame.session.visibilityState = 'hidden'; s.tick();
+  assert.equal(s.xr.lastStop.reason, 'visibility');
+});

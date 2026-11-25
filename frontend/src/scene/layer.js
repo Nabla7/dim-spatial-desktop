@@ -23,14 +23,6 @@ export class Layer {
   update() {}
   touch() { this.lastAt = performance.now(); }
 
-  // Subscribe afresh. A channel can go quiet for good (a headset that slept, a link that dropped) while
-  // the connection itself still looks healthy; the layers' watchdog calls this when the topic is busy on
-  // the bus and nothing has reached this layer.
-  restart() {
-    if (!this.visible) return;
-    this.stop(); this.start(); this.restartedAt = performance.now();
-  }
-
   // Place a child at a tf frame; hides it while the tree does not reach that frame.
   place(object, frame) {
     const pose = this.tf.lookup(frame);
