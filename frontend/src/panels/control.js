@@ -158,13 +158,28 @@ export function openControl(app) {
       ui.toggle(row, `${short(target)}  → ${target.readers.map(words).join(', ')}`, !!controls.values.get(target.key), on => controls.setSwitch(target, on), {id: `switch:${target.key}`, enabled: armed});
       y += 50; ui.hair(inner.x, y - 2, inner.r, y - 2);
     }
+    return y - inner.y;
+  }
+
+  function drawNavigate(ui, inner) {
+    let y = inner.y;
+    const enabled = controls.canNavigate;
+    const note = controls.aiming ? 'Click the floor to send one goal. Dragging never sends a goal.'
+      : 'Choose a goal input, then click the floor. In a headset, point and press the primary button.';
+    y += ui.wrap(enabled ? note : 'Arm the controls and show the live map to navigate. Stop headset arms first.',
+      new Rect(inner.x, y, inner.w, 0), {size: SIZE.sm, color: ui.tone(controls.aiming ? 'warn' : 'muted'), maxLines: 4, lineHeight: 1.4}) + 16;
     for (const target of controls.goals) {
-      const row = new Rect(inner.x, y, inner.w, 60), aiming = controls.aiming === target;
-      ui.text(short(target), row.x, row.y + 18, {size: SIZE.md, weight: 500, max: row.w - 170});
-      ui.text(aiming ? 'now press a point on the table' : `${target.type.split('.')[1]} → ${target.readers.map(words).join(', ')}`, row.x, row.y + 42, {size: SIZE.xs - 1, family: 'mono', color: ui.tone(aiming ? 'warn' : 'muted'), max: row.w - 170});
-      ui.button(new Rect(row.r - 150, row.y + 10, 150, 40), aiming ? 'CANCEL' : 'POINT AT IT', () => controls.aim(target), {id: `aim:${target.key}`, size: SIZE.xs, on: aiming, tone: aiming ? 'warn' : 'primary', enabled: armed});
-      y += 64; ui.hair(inner.x, y - 2, inner.r, y - 2);
+      const aiming = controls.aiming === target;
+      ui.text(short(target), inner.x, y + 16, {size: SIZE.sm, family: 'mono', max: inner.w}); y += 30;
+      ui.text(`${target.type.split('.')[1]} → ${target.readers.map(words).join(', ')}`, inner.x, y + 12,
+        {size: SIZE.xs, color: ui.tone('muted'), max: inner.w}); y += 28;
+      ui.button(new Rect(inner.x, y, inner.w, 44), aiming ? 'CANCEL FLOOR PICK' : 'CLICK FLOOR TO NAVIGATE',
+        () => controls.aim(target), {id: `aim:${target.key}`, size: SIZE.sm, on: aiming, tone: aiming ? 'warn' : 'primary', enabled}); y += 56;
+      if (target.writers.length) y += ui.wrap(`Also written by ${target.writers.map(words).join(', ')}. Prefer the operator click input.`,
+        new Rect(inner.x, y, inner.w, 0), {size: SIZE.xs, color: ui.tone('warn'), maxLines: 3}) + 8;
     }
+    y += ui.wrap('A sent goal is handled by the blueprint navigator. Cancel floor pick only cancels your next click.',
+      new Rect(inner.x, y, inner.w, 0), {size: SIZE.xs, color: ui.tone('muted'), maxLines: 3, lineHeight: 1.4});
     return y - inner.y;
   }
 
@@ -248,7 +263,8 @@ export function openControl(app) {
       if (controls.statuses.length) drawStatus(ui, content);
       const tabs = [
         ['headset', 'HEADSET', controls.xr.available ? 1 : 0],
-        ['drive', 'DRIVE', controls.drives.length], ['set', 'SET', controls.numbers.length + controls.switches.length + controls.goals.length],
+        ['navigate', 'NAVIGATE', controls.goals.length], ['drive', 'DRIVE', controls.drives.length],
+        ['set', 'SET', controls.numbers.length + controls.switches.length],
         ['joints', 'JOINTS', controls.joints.length], ['actions', 'ACTIONS', controls.actions.length],
       ].filter(([, , count]) => count > 0);
       if (!tabs.some(([key]) => key === state.tab)) state.tab = tabs[0][0];
@@ -257,7 +273,7 @@ export function openControl(app) {
       if (state.tab === 'headset') drawHeadset(ui, content);
       else if (state.tab === 'drive') drawDrive(ui, content);
       else if (state.tab === 'joints') drawJoints(ui, content);
-      else ui.scroll(content, state.tab, inner => state.tab === 'set' ? drawSet(ui, inner) : drawActions(ui, inner));
+      else ui.scroll(content, state.tab, inner => state.tab === 'navigate' ? drawNavigate(ui, inner) : state.tab === 'set' ? drawSet(ui, inner) : drawActions(ui, inner));
     },
   });
   for (const type of ['change', 'drive', 'joints', 'status']) controls.addEventListener(type, () => panel.invalidate(), {signal: panel.signal});

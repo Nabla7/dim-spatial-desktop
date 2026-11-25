@@ -10,10 +10,10 @@ import {MotionSpeeds} from './motion-speeds.js';
 import {XRControls} from './xr-controls.js';
 import {ArmHome} from './arm-home.js';
 import {rankDriveTargets} from './drive-routing.js';
+import {navigationTargets, navigationFrame} from './navigation.js';
 
 const DRIVE = ['geometry_msgs.Twist', 'geometry_msgs.TwistStamped'];
 const NUMBER = ['std_msgs.Float32', 'std_msgs.Int32', 'std_msgs.Int8', 'std_msgs.UInt32'];
-const GOAL = ['geometry_msgs.PoseStamped', 'geometry_msgs.PointStamped'];
 const PERIOD = 66; // ms between drive commands
 
 // Desktop's zenoh gateway lets one client at a time publish on a command key: a lease. Every app that
@@ -23,9 +23,6 @@ const LEASE_GROUP = 'dim-spatial-desktop';
 const LEASE_TIMEOUT_MS = 5000;       // the lease outlives a short stall of the link; a drive's deadman does not
 const RETAKE_AFTER_IDLE_MS = 1500;   // taken over, only a new press takes it back, not the hold that was going
 
-// A pose is offered as "point at it on the table" only where a place on the floor is what the stream wants: a
-// navigation goal. A pose for an arm (a cartesian command) must never come from a press on the floor.
-const FLOOR_GOAL = /goal|waypoint|clicked|destination|nav/;
 // A number that is not a quantity (button bits, a mode, a counter) gets no slider.
 const NOT_A_QUANTITY = /button|mask|flag|bits|mode|index|count|seq|_id$/;
 // A stream of joint states that nothing in the blueprint writes is a state the page should not invent, not a command.
@@ -82,8 +79,9 @@ export class Controls extends EventTarget {
     this.armHome.discover(blueprint.modules);
     for (const module of blueprint.modules) for (const stream of module.streams) {
       if (!stream.key || !stream.type) continue;
-      if (!found.has(stream.key)) found.set(stream.key, {key: stream.key, topic: stream.topic, type: stream.type, readers: [], writers: []});
+      if (!found.has(stream.key)) found.set(stream.key, {key: stream.key, topic: stream.topic, type: stream.type, readers: [], writers: [], ports: []});
       found.get(stream.key)[stream.direction === 'out' ? 'writers' : 'readers'].push(module.name);
+      if (stream.direction !== 'out') found.get(stream.key).ports.push(stream.name);
     }
     // Only what something reads; a stream a module of the blueprint already writes is listed last (two writers fight).
     const commands = [...found.values()].filter(target => target.readers.length).sort((a, b) => a.writers.length - b.writers.length || a.topic.localeCompare(b.topic));
@@ -92,7 +90,8 @@ export class Controls extends EventTarget {
     this.drives = rankDriveTargets(commands.filter(target => DRIVE.includes(target.type)), blueprint.modules).map(keep);
     this.numbers = commands.filter(target => NUMBER.includes(target.type) && !NOT_A_QUANTITY.test(target.topic)).map(keep);
     this.switches = commands.filter(target => target.type === 'std_msgs.Bool').map(keep);
-    this.goals = commands.filter(target => GOAL.includes(target.type) && FLOOR_GOAL.test(target.topic)).map(keep);
+    this.goals = navigationTargets(commands).map(keep);
+    if (!this.goals.includes(this.aiming)) this.aiming = null;
     this.joints = commands.filter(target => target.type === 'sensor_msgs.JointState' && !target.writers.length && !STATE_TOPIC.test(target.topic)).map(target => keep({...target, kind: 'stream', label: target.topic.replace(/^\//, '')}));
     this.states = [...found.values()].filter(target => target.type === 'sensor_msgs.JointState' && target.writers.length).sort((a, b) => Number(/joint_state$/.test(b.topic)) - Number(/joint_state$/.test(a.topic)));
     if (!this.drives.some(target => target.key === this.driveKey)) this.driveKey = this.drives[0]?.key ?? null;
@@ -138,6 +137,7 @@ export class Controls extends EventTarget {
 
   disarm() {
     const was = this.armed;
+    this.goalRequest = (this.goalRequest || 0) + 1;
     this.xr.stop();
     void this.armHome.cancel();
     this.armed = false; this.aiming = null; this.held.clear();
@@ -155,6 +155,7 @@ export class Controls extends EventTarget {
 
   // Stop everything that moves by velocity, armed or not.
   stop() {
+    this.aiming = null; this.goalRequest = (this.goalRequest || 0) + 1;
     this.xr.stop();
     void this.armHome.cancel();
     for (const input of Object.values(this.inputs)) input.fill(0);
@@ -233,7 +234,7 @@ export class Controls extends EventTarget {
     return entry;
   }
 
-  publish(target, bytes) {
+  publish(target, bytes, {valid, onResult} = {}) {
     if (!bytes || !this.bus.live) return false;
     const entry = this.entry(target), now = performance.now();
     const metrics = entry.metrics ??= {attempts: 0, offered: 0, skipped: {}, maxAttemptGapMs: 0, lastAttemptAt: null};
@@ -245,6 +246,19 @@ export class Controls extends EventTarget {
       catch (error) { console.warn(`publish ${target.topic}:`, error.message); return skip('put_error'); }
     };
     const taking = this.claim(target.key);
+    // A discrete floor click may wait for its lease, but must never survive disarm, replacement,
+    // a lost connection, or a refused lease. Report the actual offer, not the pending request.
+    if (valid) {
+      const request = this.lease.request;
+      const send = () => {
+        const allowed = valid() && this.bus.live && this.lease.request === request
+          && (typeof this.bus.client?.lease !== 'function' || this.lease.status === 'held');
+        const sent = allowed ? put() : skip('cancelled_or_no_lease');
+        onResult?.(sent); return sent;
+      };
+      if (taking) { taking.then(send); return true; }
+      return send();
+    }
     // Live tracking never waits in a promise and replays old poses after a lease/reconnect.
     if (target.live) {
       const reason = !this.armed ? 'not_armed' : taking ? 'taking_lease' : this.lease.status !== 'held' ? 'lease_not_held'
@@ -381,18 +395,30 @@ export class Controls extends EventTarget {
 
   setSwitch(target, on) { if (!this.armed) return; this.values.set(target.key, on); this.publish(target, this.encode(target.type, {data: on})); this.emit(); }
 
-  // -- goals: the next press on the table is where the pose goes --------------------------------------
-  aim(target) { this.aiming = this.aiming === target || !this.armed ? null : target; this.emit(); }
+  // -- goals: one completed click on the live map ---------------------------------------------------
+  get canNavigate() { return this.armed && this.bus.live && !this.xr.sceneInputLocked && !this.app.replay?.active && !this.app.scenes?.active; }
+  aim(target) {
+    this.goalRequest = (this.goalRequest || 0) + 1;
+    this.aiming = this.aiming === target || !this.canNavigate || !this.goals.includes(target) ? null : target;
+    this.emit();
+  }
 
   // point: in the fixed frame. Returns whether a goal was waiting for it.
   place(point) {
     const target = this.aiming;
-    if (!target || !this.armed) return false;
+    if (!target || !this.canNavigate) return false;
+    const frame = navigationFrame(this.app.layers);
+    if (!frame || ![point.x, point.y, point.z].every(Number.isFinite)) {
+      this.app.toast('Cannot send a goal until the live map has a known coordinate frame.', 'warn'); return true;
+    }
     this.aiming = null;
-    const frame = this.app.layers.tf.root || 'world', position = {x: point.x, y: point.y, z: point.z};
+    const request = this.goalRequest = (this.goalRequest || 0) + 1;
+    const position = {x: point.x, y: point.y, z: point.z};
     const value = target.type === 'geometry_msgs.PointStamped' ? {header: header(frame), point: position} : {header: header(frame), pose: {position, orientation: {x: 0, y: 0, z: 0, w: 1}}};
-    const sent = this.publish(target, this.encode(target.type, value));
-    this.app.toast(sent ? `${target.topic} ← (${point.x.toFixed(2)}, ${point.y.toFixed(2)}) in ${frame}` : `Could not send to ${target.topic}`, sent ? 'ok' : 'danger');
+    const result = sent => this.app.toast(sent ? `Goal sent: (${point.x.toFixed(2)}, ${point.y.toFixed(2)}) in ${frame}` : `Goal not sent to ${target.topic}`, sent ? 'ok' : 'danger');
+    const bytes = this.encode(target.type, value);
+    if (!bytes) result(false);
+    else this.publish(target, bytes, {valid: () => this.canNavigate && this.goalRequest === request && this.goals.includes(target) && navigationFrame(this.app.layers) === frame, onResult: result});
     this.emit();
     return true;
   }

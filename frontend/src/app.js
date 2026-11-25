@@ -83,6 +83,7 @@ export class App extends EventTarget {
     // One thing has the table: an episode that opens takes it from a scene.
     this.replay.addEventListener('open', () => this.scenes.close());
     this.pointers.onTablePoint = point => this.controls.place(point);
+    this.pointers.wantsTablePoint = () => !!this.controls.aiming && this.controls.canNavigate;
     this.pointers.driveSticks = (left, right) => this.controls.sticks(left, right);
     this.pointers.teleopOwnsInputs = () => this.controls.xr.ownsInputs;
     this.pointers.sceneInputLocked = () => this.controls.xr.sceneInputLocked;

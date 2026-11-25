@@ -54,3 +54,46 @@ test('JoyCon triggers stay with teleop and require release before returning to U
   p.padButtons(held(true)); p.padButtons(held(false)); assert.equal(state.clicks, 1);
   assert.equal(pointer.down, false);
 });
+
+test('XR floor navigation sends only on a completed primary click, never a grab, cancel, drag or lock', () => {
+  const {p, pointer, state} = setup();
+  let goals = 0, picking = true;
+  p.stage.toRobot = point => point;
+  p.wantsTablePoint = () => picking;
+  p.offerTablePoint = () => { goals++; return true; };
+  p.press(pointer); assert.equal(goals, 0); p.release(pointer); assert.equal(goals, 1);
+  p.press(pointer); p.cancel(pointer); p.release(pointer); assert.equal(goals, 1);
+  p.press(pointer); pointer.grip.x += 0.1; p.release(pointer); assert.equal(goals, 1);
+  p.press(pointer); state.locked = true; p.release(pointer); assert.equal(goals, 1); state.locked = false;
+  p.press(pointer); picking = false; p.release(pointer); assert.equal(goals, 1); picking = true;
+  p.press(pointer, {grabOnly: true}); assert.equal(pointer.press.type, 'world'); p.cancel(pointer);
+  assert.equal(goals, 1);
+});
+
+test('mouse floor navigation ignores drags, middle/right clicks and pointer cancellation', () => {
+  const listeners = new Map(), element = {style: {}, setPointerCapture() {},
+    getBoundingClientRect: () => ({left: 0, top: 0, width: 100, height: 100}),
+    addEventListener: (name, callback) => listeners.set(name, callback)};
+  const {p} = setup(); p.renderer = {domElement: element, xr: {isPresenting: false}};
+  p.camera = {}; p.raycaster.setFromCamera = () => {};
+  p.cast = () => null; p.beginWorldGrab = () => {}; p.moveWorld = () => {};
+  p.wantsTablePoint = () => true; p.teleopOwnsInputs = () => false;
+  let goals = 0; p.offerTablePoint = () => { goals++; return true; }; p.bindMouse();
+  const event = {clientX: 50, clientY: 50, pointerId: 1, button: 0};
+  const down = e => listeners.get('pointerdown')(e), up = e => listeners.get('pointerup')(e);
+  down(event); assert.equal(goals, 0); up(event); assert.equal(goals, 1);
+  down(event); listeners.get('pointermove')({...event, clientX: 60}); up(event); assert.equal(goals, 1);
+  down(event); listeners.get('pointercancel')(event); up(event); assert.equal(goals, 1);
+  for (const button of [1, 2]) { down({...event, button}); up({...event, button}); } assert.equal(goals, 1);
+});
+
+test('a floor pick respects the visible tabletop boundary and converts into robot coordinates', () => {
+  const {p, pointer} = setup(); let sent = null;
+  p.stage = {clipping: true, lifeSize: false, clipPlanes: [{distanceToPoint: () => -1}],
+    toRobot: point => point.addScalar(2)};
+  p.tablePoint = () => pointer.grip.clone().set(1, 2, 3);
+  p.onTablePoint = point => { sent = point; return true; };
+  assert.equal(p.offerTablePoint(pointer), false); assert.equal(sent, null);
+  p.stage.clipPlanes = []; assert.equal(p.offerTablePoint(pointer), true);
+  assert.deepEqual(sent.toArray(), [3, 4, 5]);
+});

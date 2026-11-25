@@ -89,15 +89,17 @@ export class Pointers {
     }
     if (this.text.active) this.text.blur();
     if (hit?.type === 'pick' && !grabOnly) { pointer.press = {type: 'pick', object: hit.object}; return; }
-    // A press on the table can be an answer to "point at it" (a goal waiting for a place).
-    if (!grabOnly && this.offerTablePoint(pointer)) { pointer.press = {type: 'given'}; return; }
+    // Reserve the gesture, but only publish when a click completes. A drag or cancelled press is not a goal.
+    if (!grabOnly && this.wantsTablePoint?.()) {
+      pointer.press = {type: 'goal', at: performance.now(), from: pointer.grip.clone()}; return;
+    }
     pointer.press = {type: 'world', at: performance.now(), from: pointer.grip.clone()};
     if (pointer.kind !== 'mouse') this.beginWorldGrab(pointer);
   }
 
   release(pointer) {
     const locked = this.sceneInputLocked?.();
-    const press = locked && pointer.press?.type === 'world' ? null : pointer.press, hit = locked ? null : pointer.hit;
+    const press = locked && ['world', 'goal'].includes(pointer.press?.type) ? null : pointer.press, hit = locked ? null : pointer.hit;
     pointer.down = false; pointer.press = null;
     if (pointer.panelGrab) { this.endPanelGrab(pointer); return; }
     if (press?.type === 'panel') {
@@ -105,9 +107,14 @@ export class Pointers {
       press.panel.pointerUp(pointer.id, same ? hit.x : null, same ? hit.y : null);
     }
     if (press?.type === 'pick' && hit?.type === 'pick' && hit.object === press.object) hit.handlers.onClick?.(hit, pointer);
+    if (press?.type === 'goal' && !hit && this.wantsTablePoint?.()) {
+      const click = pointer.kind === 'mouse' ? !pointer.dragged
+        : performance.now() - press.at < 400 && pointer.grip.distanceTo(press.from) < 0.02;
+      if (click) this.offerTablePoint(pointer);
+    }
     if (press?.type === 'world') {
       this.endWorldGrab(pointer);
-      if (pointer.kind === 'mouse' && !pointer.dragged) { this.onEmptyClick?.(); this.onWorldClick?.(pointer); }
+      if (pointer.kind === 'mouse' && !pointer.dragged && !press.grabOnly) { this.onEmptyClick?.(); this.onWorldClick?.(pointer); }
       // A hand or a controller: a short press that did not move the world is a press on what it points at.
       else if (pointer.kind !== 'mouse' && press.from && performance.now() - press.at < 400 && pointer.grip.distanceTo(press.from) < 0.02) this.onWorldClick?.(pointer);
     }
@@ -117,6 +124,8 @@ export class Pointers {
   offerTablePoint(pointer) {
     if (!this.onTablePoint) return false;
     const point = this.tablePoint(pointer);
+    // The tabletop clips the map. Clicking outside its visible bounds must not set a distant goal.
+    if (point && this.stage.clipping && !this.stage.lifeSize && this.stage.clipPlanes?.some(plane => plane.distanceToPoint(point) < -1e-6)) return false;
     return !!point && this.onTablePoint(this.stage.toRobot(point.clone())) === true;
   }
 
@@ -239,17 +248,19 @@ export class Pointers {
       if (pointer.start && Math.hypot(event.clientX - pointer.start[0], event.clientY - pointer.start[1]) > 4) pointer.dragged = true;
       this.hover(pointer, this.cast(pointer));
       if (this.worldGrabs.size) this.moveWorld();
-      element.style.cursor = pointer.hit?.type === 'pick' ? 'pointer' : pointer.hit?.type === 'panel' && pointer.hit.panel.regionAt(pointer.hit.x, pointer.hit.y)?.onClick ? 'pointer' : '';
+      element.style.cursor = pointer.hit?.type === 'pick' ? 'pointer' : pointer.hit?.type === 'panel' && pointer.hit.panel.regionAt(pointer.hit.x, pointer.hit.y)?.onClick ? 'pointer' : !pointer.hit && this.wantsTablePoint?.() ? 'crosshair' : '';
     }, true);
     element.addEventListener('pointerdown', event => {
       if (this.renderer.xr.isPresenting) return;
+      if (this.sceneInputLocked?.()) return;
       aim(event); this.hover(pointer, this.cast(pointer));
       pointer.start = [event.clientX, event.clientY]; pointer.dragged = false;
       if (pointer.hit) { this.orbit.enabled = false; element.setPointerCapture(event.pointerId); if (event.button === 0) this.press(pointer); return; }
       // Empty space: the left button orbits (OrbitControls), the right button slides the world across the table.
-      if (event.button === 2) { this.orbit.enabled = false; pointer.press = {type: 'world'}; this.beginWorldGrab(pointer); }
-      else if (this.offerTablePoint(pointer)) { this.orbit.enabled = false; pointer.press = {type: 'given'}; }
-      else { pointer.press = {type: 'world'}; if (this.text.active) this.text.blur(); }
+      pointer.down = true; element.setPointerCapture(event.pointerId);
+      if (event.button === 2) { this.orbit.enabled = false; pointer.press = {type: 'world', grabOnly: true}; this.beginWorldGrab(pointer); }
+      else if (event.button === 0 && this.wantsTablePoint?.()) { this.orbit.enabled = false; this.press(pointer); }
+      else { pointer.press = {type: 'world', grabOnly: event.button !== 0}; if (this.text.active) this.text.blur(); }
     }, true);
     const up = event => {
       if (this.renderer.xr.isPresenting) return;
@@ -257,7 +268,7 @@ export class Pointers {
       this.release(pointer); this.orbit.enabled = true; pointer.start = null;
     };
     element.addEventListener('pointerup', up, true);
-    element.addEventListener('pointercancel', up, true);
+    element.addEventListener('pointercancel', () => { this.cancel(pointer); this.orbit.enabled = true; pointer.start = null; }, true);
     element.addEventListener('pointerleave', () => { this.hover(pointer, null); pointer.active = false; });
     element.addEventListener('contextmenu', event => event.preventDefault());
     element.addEventListener('wheel', event => {
@@ -294,7 +305,7 @@ export class Pointers {
 
   cancel(pointer) {
     this.hover(pointer, null);
-    if (pointer.press?.type === 'world') pointer.press = null;
+    if (['world', 'goal'].includes(pointer.press?.type)) pointer.press = null;
     if (pointer.down) this.release(pointer);
     this.endWorldGrab(pointer);
   }
