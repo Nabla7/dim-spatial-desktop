@@ -69,7 +69,7 @@ export class Diagnostics extends EventTarget {
       previousUpdate?.(...args);
       watch.textureRtp = watch.lastRtp;
       watch.textureUpdated = true;
-      feed.subscription.traceVideoFrame?.(watch.textureRtp, 'video.texture_upload', {correlation_basis: 'latest_presented_frame', physical_display: false});
+      feed.subscription?.traceVideoFrame?.(watch.textureRtp, 'video.texture_upload', {correlation_basis: 'latest_presented_frame', physical_display: false});
     };
     this.watches.set(feed, watch);
     return watch;

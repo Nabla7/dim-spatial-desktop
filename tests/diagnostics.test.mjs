@@ -24,10 +24,11 @@ test('video latency observation follows receivers across hiding and resubscribin
   const diagnostics = Object.create(Diagnostics.prototype); diagnostics.watches = new Map();
   let stops = 0, starts = 0;
   const subscription = () => ({watchVideoLatency: () => { starts++; return () => { stops++; }; }});
-  const feed = {video: {requestVideoFrameCallback: () => 1}, subscription: subscription()};
+  const feed = {video: {requestVideoFrameCallback: () => 1}, texture: {}, subscription: subscription()};
   const watch = diagnostics.watch(feed);
   assert.equal(starts, 1);
   feed.subscription = null;
+  assert.doesNotThrow(() => feed.texture.onUpdate());
   assert.equal(diagnostics.watch(feed), watch); assert.equal(stops, 1);
   feed.subscription = subscription(); diagnostics.watch(feed);
   assert.equal(starts, 2); assert.equal(stops, 1);

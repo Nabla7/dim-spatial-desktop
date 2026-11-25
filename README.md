@@ -446,3 +446,22 @@ AGENTS.md says how the code is laid out and where an addition goes.
 - Mesh files are kept in the browser (IndexedDB) by path. A mesh changed in place under the same path
   stays stale until the site data is cleared.
 - On a standalone headset meshes past 600 000 triangles in total are left out.
+
+
+## Optional runtime tracing
+
+Open the app with `?diagnosticsRun=RUN_ID` to correlate browser decode, presentation
+and XR submission with the shared gateway's frame identities. This requires the
+instrumented `dimensionalOS/zenoh-gateway` SDK; an older SDK reports that tracing is
+unsupported. Ordinary viewing does not enable it.
+
+Browser metadata uploads use the app's declared `api/diagnostics/trace` route.
+They are saved beneath `DIMOS_DIAGNOSTICS_DIR`, or the app data directory's
+`diagnostics/` folder, with bounded retention and retry-safe batch identities.
+Use the same run ID as the DimOS workers. Capture roots are local to each host;
+collect their run folders together for the DimOS diagnostics report. No robot
+commands or image recording are started by enabling tracing.
+
+This app consumes the normal gateway SDK served by Desktop. Gateway changes must
+be released and pinned by Desktop; a private Desktop host fork is not the app's
+distribution mechanism.
