@@ -1,0 +1,8 @@
+{
+  "version": "5",
+  "remote": {
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.11/src/colormaps.ts": "0b9ed8a26e4c16ec7b2577563006ffaa373f501924b4584b526f85ed18c67fd6",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.11/src/three/gradients.ts": "b873344a97ac794c205029a8c9aeae7fce36c71e8e8a45b1a545b6953ec21bbf",
+    "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.11/src/three/point_material.ts": "8cc7a891c6871c177e380ca5b6cf2accc9784f9babfe330936494303197fc452"
+  }
+}

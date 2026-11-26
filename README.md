@@ -98,7 +98,7 @@ RPCs that the blueprint's own start-up calls (`deliver_*`) fold away under the o
 | a `Twist` stream a module reads | **DRIVE**: a pad, keys `W S` (forward, back) `A D` (turn) `Q E` (slide), `Space` stops; in a headset the left stick moves and the right stick turns |
 | paired `webxr_pose: PoseStamped` and `webxr_joy: Joy` inputs | **HEADSET**: tracked controller poses and buttons through the blueprint's existing teleop backend |
 | `Float32`, `Int32`, `Bool` streams | **SET**: a slider or a switch (below) |
-| a `PoseStamped` or `PointStamped` navigation goal | **SET**: POINT AT IT, then press a place on the table |
+| a `PoseStamped` or `PointStamped` navigation goal | **NAVIGATE**: CLICK FLOOR TO NAVIGATE, then click a place on the live map |
 | a `JointState` command stream, or an RPC `(name: str, position: float)` | **JOINTS**: a slider per joint over its limits, with the measured position marked |
 | RPCs that need no arguments, and pinned calls | **ACTIONS**: one button each |
 | `status()` RPCs | a line of what each module reports, read while the panel is open |
@@ -115,6 +115,14 @@ sends zero on every drive stream. Closing the panel makes the controls safe.
 One app at a time may command a robot (the gateway's lease). The first command takes it, also from
 another app such as Controller; if another app takes it back, the panel says so and your next press
 takes it again.
+
+### Floor navigation and map rendering
+
+Open **Control → NAVIGATE**, arm the controls, select **CLICK FLOOR TO NAVIGATE**, then click the floor. In XR, point at the floor and press/release the primary button. Each selection sends one goal through the blueprint's discovered navigation input and the existing command lease. Remapped input ports work; the operator click input is listed before internal planner goals. Dragging, right-click panning, UI presses and cancelled gestures do not send goals. Scene previews and recorded episodes cannot be navigation targets. The goal uses the displayed map's fixed frame and floor height; it is not a terrain raycast.
+
+**CANCEL FLOOR PICK** cancels the pending selection, not a goal already accepted by the navigator. A refused lease, disarm, STOP or coordinate-frame change discards a click still waiting to be sent.
+
+Point clouds use the same `dimos-react` voxel shader, soft cube lighting and `memworld` height palette as standard Controller, with opaque depth-tested rendering. Map topics default to 10 cm display voxels; this is rendering size, not a change to mapper resolution. The pinned upstream dependency and regeneration command are in [the renderer dependency notes](frontend/vendor/dimos-react/README.md).
 
 ### Tracked arm control in VR
 

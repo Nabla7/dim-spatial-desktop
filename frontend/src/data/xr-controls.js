@@ -266,7 +266,7 @@ export class XRControls {
       const trace = c.bus.trace, context = trace?.sample(target.key);
       trace?.event('operator.input', context, {input: 'webxr', channel: target.key, frame_time_ms: now});
       const encoded = c.encode(target.type, message);
-      return c.publish(target, encoded, context);
+      return c.publish(target, encoded, {context});
     };
     if (this.targets.head) {
       const head = headSample(frame.getViewerPose?.(reference), captureTime);
