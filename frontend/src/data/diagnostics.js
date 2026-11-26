@@ -1,5 +1,4 @@
 import {gateway} from './gateway.js';
-import {TraceUpload} from './trace-upload.js';
 
 export function rate(previous, current, seconds) {
   return Number.isFinite(previous) && Number.isFinite(current) && current >= previous && seconds > 0 ? (current - previous) / seconds : null;
@@ -25,15 +24,12 @@ export class Diagnostics extends EventTarget {
     this.watches = new Map(); this.previous = new Map(); this.intervals = []; this.lastFrame = null;
     this.lastSample = performance.now(); this.stopped = false; this.generation = 0;
     this.timer = setTimeout(() => this.sample(), 2000);
-    this.traceUpload = new TraceUpload(gateway.reportTrace);
-    this.traceTimer = setTimeout(() => this.traceSample(), 250);
     addEventListener('pagehide', () => this.stop());
     addEventListener('pageshow', () => {
       if (!this.stopped) return;
       this.stopped = false; this.lastFrame = null; this.intervals = []; this.lastSample = performance.now();
       this.timer = setTimeout(() => this.sample(), 2000);
-      this.traceTimer = setTimeout(() => this.traceSample(), 250);
-    });
+      });
   }
 
   frame(now) {
@@ -190,14 +186,6 @@ export class Diagnostics extends EventTarget {
     }
   }
 
-  async traceSample() {
-    const generation = this.generation;
-    this.app.bus.trace?.tick();
-    try { await this.traceUpload.flush(this.app.bus.trace); this.traceError = null; }
-    catch (error) { this.traceError = error.message; }
-    if (!this.stopped && generation === this.generation) this.traceTimer = setTimeout(() => this.traceSample(), 250);
-  }
-
   async sample() {
     const generation = this.generation;
     try {
@@ -219,7 +207,6 @@ export class Diagnostics extends EventTarget {
 
   stop() {
     this.stopped = true; this.generation++; clearTimeout(this.timer);
-    clearTimeout(this.traceTimer);
     for (const [feed, watch] of this.watches) this.unwatch(feed, watch);
   }
 }

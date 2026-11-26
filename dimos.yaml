@@ -14,7 +14,6 @@ provides:
     - api/agent/*
     - api/version
     - api/diagnostics
-    - api/diagnostics/trace
     - api/source
     - api/replay/*
     - api/scenes/*
@@ -33,6 +32,8 @@ uses:
     - GET catalog/blueprints/{name}/config
     - GET history/recordings
     - GET msgs.js
+    - GET diagnostics/session: {optional: true, description: Discover an explicitly started diagnostic session}
+    - POST diagnostics/browser: {optional: true, description: Shared SDK uploads bounded diagnostic metadata}
   "@desktop-gateway":
     - GET topics/rates
     - GET management/gateways/agent

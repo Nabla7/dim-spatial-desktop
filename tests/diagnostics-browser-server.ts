@@ -1,11 +1,9 @@
 // Loopback-only qualification harness, never part of the installed app.
-import {TraceStore} from '../server/trace.ts';
-const [root, client, capture] = Deno.args;
-if (!root || !client || !capture) throw new Error('source root, compiled SDK and capture directory required');
-const store = new TraceStore(capture);
+const [root, client, diagnostics] = Deno.args;
+if (!root || !client || !diagnostics) throw new Error('source root, compiled SDK and capture directory required');
 Deno.serve({hostname:'127.0.0.1',port:0,onListen:({hostname,port})=>console.log(JSON.stringify({url:`http://${hostname}:${port}`}))}, async request => {
   const path = decodeURIComponent(new URL(request.url).pathname);
-  if (path.endsWith('/api/diagnostics/trace')) return store.handle(request);
+  if (path.startsWith('/diagnostics/')) return fetch(diagnostics + path, {method:request.method, headers:request.headers, body:request.body});
   if (path.includes('..')) return new Response('invalid path',{status:400});
   const file = path === '/client.js' ? client : root + path;
   try {

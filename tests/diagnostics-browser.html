@@ -2,12 +2,15 @@
 <meta charset="utf-8">
 <title>Diagnostics integration fixture</title>
 <script type="module">
-import {connect, TraceRecorder} from '/client.js';
+import {connect, openDiagnostics} from '/client.js';
 import * as THREE from '../frontend/vendor/three/three.module.min.js';
 import {Diagnostics} from '../frontend/src/data/diagnostics.js';
 
 window.startFixture = async ({gatewayUrl, run, mode = 'trace', viewOnly = false}) => {
-  const trace = mode === 'off' ? undefined : new TraceRecorder(run);
+  const session = mode === 'off' ? null : await openDiagnostics(new URL('/diagnostics/', location.href));
+  const trace = session?.trace;
+  if (mode !== 'off' && trace?.runId !== run) throw new Error('shared session not active');
+  session?.start();
   const client = await connect(gatewayUrl, {diagnostics: trace, iceServers: [], heartbeatHz: 5});
   const feeds = new Map();
   const app = {bus: {trace, client}, layers: {feeds: {feeds}}};
@@ -49,7 +52,7 @@ window.startFixture = async ({gatewayUrl, run, mode = 'trace', viewOnly = false}
   }));
   let inputTimer;
   window.fixture = {
-    client, trace, diagnostics, feeds,
+    client, trace, session, diagnostics, feeds,
     command(value) {
       for (const [index, commandKey] of commandKeys.entries()) {
       const context = trace?.sample(commandKey);
@@ -60,12 +63,12 @@ window.startFixture = async ({gatewayUrl, run, mode = 'trace', viewOnly = false}
     rendering(value) {rendering=value;},
     startInputs() {inputTimer = setInterval(() => this.command(Math.sin(performance.now() / 2000) * 0.1), 1000 / 60);},
     stopInputs() {clearInterval(inputTimer);},
-    async flush() {await diagnostics.traceSample();},
+    async flush() {await session?.upload.flush(trace);},
     async close() {
       cancelAnimationFrame(frame);
       clearInterval(inputTimer);
       for (const feed of feeds.values()) diagnostics.unwatch(feed,diagnostics.watches.get(feed));
-      diagnostics.stop(); if (trace) await diagnostics.traceUpload.flush(trace);
+      diagnostics.stop(); if (trace) await session.upload.flush(trace); session?.close();
       for (const publisher of publishers) publisher.close();
       for (const feed of feeds.values()) {feed.subscription.close(); feed.texture.dispose();}
       await lease?.release(); client.close(); renderer.dispose();

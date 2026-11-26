@@ -450,18 +450,17 @@ AGENTS.md says how the code is laid out and where an addition goes.
 
 ## Optional runtime tracing
 
-Open the app with `?diagnosticsRun=RUN_ID` to correlate browser decode, presentation
-and XR submission with the shared gateway's frame identities. This requires the
-instrumented `dimensionalOS/zenoh-gateway` SDK; an older SDK reports that tracing is
-unsupported. Ordinary viewing does not enable it.
+Start a DimOS diagnostics session, then open/reload the ordinary app. The shared
+gateway SDK discovers the active run through `GET diagnostics/session` and uploads
+bounded metadata through `POST diagnostics/browser` on the DimOS gateway. Spatial
+has no private trace store, upload server, retention policy or special capture URL.
+It contributes only its renderer texture, frame-submission and XR observations.
 
-Browser metadata uploads use the app's declared `api/diagnostics/trace` route.
-They are saved beneath `DIMOS_DIAGNOSTICS_DIR`, or the app data directory's
-`diagnostics/` folder, with bounded retention and retry-safe batch identities.
-Use the same run ID as the DimOS workers. Capture roots are local to each host;
-collect their run folders together for the DimOS diagnostics report. No robot
-commands or image recording are started by enabling tracing.
+Session readiness and collection are owned by `dimos diagnostics session`; an
+absent/incompatible SDK produces no browser evidence and cannot satisfy readiness.
+The app still works normally when no capture is active. Stop/restart capture never
+silently reconnects command publishers; reload to join a new run.
 
-This app consumes the normal gateway SDK served by Desktop. Gateway changes must
-be released and pinned by Desktop; a private Desktop host fork is not the app's
-distribution mechanism.
+The app consumes the SDK served by Desktop. The shared gateway changes must be
+released and pinned through Desktop's normal dependency mechanism; a local source
+checkout is not a released dependency.
